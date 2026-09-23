@@ -220,14 +220,17 @@ export class RelayEngine {
       }
 
       // 3. Guardar en la base de datos (channel_mappings)
-      const mapping = await channelMappingRepository.create(
+      await channelMappingRepository.save(
         jid,
         created.channel.id,
         created.webhook ? created.webhook.url : null,
         created.webhook ? created.webhook.id : null
       );
 
-      console.log(`✅ [RelayEngine] Mapeo guardado exitosamente en BD: [${jid} <-> #${created.channel.name}] (ID: ${mapping.id})`);
+      // 4. Leer el mapeo recién creado para devolver el objeto completo
+      const mapping = await channelMappingRepository.getByWhatsAppJid(jid);
+
+      console.log(`✅ [RelayEngine] Mapeo guardado exitosamente en BD: [${jid} <-> #${created.channel.name}] (ID: ${mapping?.id})`);
       return mapping;
     } catch (err) {
       console.error(`❌ [RelayEngine] Error durante la auto-creación del mapeo para ${jid}:`, err);
