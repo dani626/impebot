@@ -122,6 +122,84 @@ export class DiscordService extends EventEmitter {
   }
 
   /**
+   * Busca o crea una categoría en el servidor principal.
+   * @param {string} categoryName 
+   * @returns {Promise<import('discord.js').CategoryChannel|null>}
+   */
+  async findOrCreateCategory(categoryName) {
+    if (!this.client || !this.isReady || !CONFIG.discord.guildId) return null;
+    try {
+      const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
+      if (!guild) return null;
+
+      const channels = await guild.channels.fetch();
+      let category = channels.find(
+        (c) => c && c.type === 4 && c.name.toLowerCase() === categoryName.toLowerCase() // 4 = ChannelType.GuildCategory
+      );
+
+      if (!category) {
+        category = await guild.channels.create({
+          name: categoryName,
+          type: 4, // GuildCategory
+        });
+        console.log(`📁 [DiscordService] Categoría creada: "${categoryName}"`);
+      }
+
+      return category;
+    } catch (err) {
+      console.error(`[DiscordService] Error creando/buscando categoría "${categoryName}":`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Crea un canal de texto en Discord bajo una categoría específica y le asocia un Webhook.
+   * @param {string} channelName 
+   * @param {string} categoryId 
+   * @param {string} topic 
+   * @returns {Promise<{ channel: import('discord.js').TextChannel, webhook: import('discord.js').Webhook }|null>}
+   */
+  async createRelayChannel(channelName, categoryId = null, topic = '') {
+    if (!this.client || !this.isReady || !CONFIG.discord.guildId) return null;
+    try {
+      const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
+      if (!guild) return null;
+
+      // Sanitizar nombre de canal para Discord (solo minúsculas, números, guiones y sin espacios)
+      const sanitizedName = channelName
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9_-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 100) || 'chat-wa';
+
+      const channel = await guild.channels.create({
+        name: sanitizedName,
+        type: 0, // ChannelType.GuildText
+        parent: categoryId || undefined,
+        topic: topic ? topic.slice(0, 1024) : undefined,
+      });
+
+      console.log(`📢 [DiscordService] Canal creado: #${channel.name} (${channel.id})`);
+
+      // Crear Webhook para este canal
+      const webhook = await channel.createWebhook({
+        name: 'ImpeBot Relay',
+        reason: 'Auto-relay WhatsApp <-> Discord',
+      });
+
+      console.log(`🔗 [DiscordService] Webhook creado para #${channel.name}`);
+
+      return { channel, webhook };
+    } catch (err) {
+      console.error(`[DiscordService] Error creando canal "${channelName}":`, err.message);
+      return null;
+    }
+  }
+
+  /**
    * Cierra las conexiones de Discord y limpia los Webhooks en caché.
    */
   destroy() {

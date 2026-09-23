@@ -66,7 +66,13 @@ export class RelayEngine {
     }
 
     // 3. Verificar si el grupo o chat tiene un mapeo a un canal de Discord
-    const mapping = await channelMappingRepository.getByWhatsAppJid(jid);
+    let mapping = await channelMappingRepository.getByWhatsAppJid(jid);
+
+    // Si no existe mapeo y se especificó DISCORD_GUILD_ID, crearlo automáticamente
+    if (!mapping && CONFIG.discord.guildId) {
+      mapping = await this.autoCreateMapping(waData);
+    }
+
     if (!mapping) return;
 
     // 4. Prevención de bucles: verificar si el mensaje ya fue registrado
@@ -160,6 +166,72 @@ export class RelayEngine {
       } catch (waErr) {
         console.error(`[RelayEngine] Error al enviar mensaje a WhatsApp (${mapping.whatsapp_jid}):`, waErr.message);
       }
+    }
+  }
+
+  /**
+   * Crea automáticamente la categoría, el canal de Discord, el Webhook y el mapeo en BD para un chat de WhatsApp.
+   * @param {object} waData 
+   * @returns {Promise<object|null>}
+   */
+  async autoCreateMapping(waData) {
+    const { jid, pushName, sender } = waData;
+
+    try {
+      let categoryName = '💬 Mensajes Directos';
+      let channelName = '';
+      let topic = `WhatsApp Chat JID: ${jid}`;
+
+      if (jid === 'status@broadcast') {
+        categoryName = '📢 Estados';
+        channelName = 'estados-whatsapp';
+        topic = `WhatsApp Estados / Stories (${jid})`;
+      } else if (jid.endsWith('@newsletter')) {
+        // Canales / Canales de difusión de WhatsApp
+        categoryName = '📢 Canales';
+        const name = await whatsAppService.getChatName(jid);
+        channelName = name ? `canal-${name}` : `canal-${jid.split('@')[0]}`;
+        topic = `WhatsApp Canal/Newsletter JID: ${jid}`;
+      } else if (jid.endsWith('@g.us')) {
+        // Grupos de WhatsApp
+        categoryName = '👥 Mensajes en Grupos';
+        const groupName = await whatsAppService.getChatName(jid);
+        channelName = groupName ? `grp-${groupName}` : `grupo-${jid.split('@')[0]}`;
+        topic = `WhatsApp Grupo JID: ${jid} | Nombre: ${groupName || 'Desconocido'}`;
+      } else {
+        // Chats privados / directos (@s.whatsapp.net o @lid)
+        categoryName = '💬 Mensajes Directos';
+        const userName = pushName || sender.split('@')[0];
+        channelName = `dm-${userName}`;
+        topic = `WhatsApp Direct Message JID: ${jid} | Usuario: ${userName}`;
+      }
+
+      console.log(`✨ [RelayEngine] Creando canal automático en Discord para ${jid} en categoría "${categoryName}"...`);
+
+      // 1. Obtener o crear la categoría correspondiente
+      const category = await discordService.findOrCreateCategory(categoryName);
+      const categoryId = category ? category.id : null;
+
+      // 2. Crear el canal y su webhook
+      const created = await discordService.createRelayChannel(channelName, categoryId, topic);
+      if (!created || !created.channel) {
+        console.error(`❌ [RelayEngine] No se pudo crear el canal de Discord para ${jid}`);
+        return null;
+      }
+
+      // 3. Guardar en la base de datos (channel_mappings)
+      const mapping = await channelMappingRepository.create(
+        jid,
+        created.channel.id,
+        created.webhook ? created.webhook.url : null,
+        created.webhook ? created.webhook.id : null
+      );
+
+      console.log(`✅ [RelayEngine] Mapeo guardado exitosamente en BD: [${jid} <-> #${created.channel.name}] (ID: ${mapping.id})`);
+      return mapping;
+    } catch (err) {
+      console.error(`❌ [RelayEngine] Error durante la auto-creación del mapeo para ${jid}:`, err);
+      return null;
     }
   }
 

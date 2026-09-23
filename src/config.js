@@ -26,6 +26,7 @@ export const CONFIG = {
   // Configuración de Discord
   discord: {
     token: process.env.DISCORD_BOT_TOKEN || '',
+    guildId: process.env.DISCORD_GUILD_ID || '',
     webhookCacheTTL: parseInt(process.env.DISCORD_WEBHOOK_CACHE_TTL, 10) || 300000,
   },
 

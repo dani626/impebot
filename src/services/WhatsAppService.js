@@ -179,6 +179,24 @@ export class WhatsAppService extends EventEmitter {
       return null;
     }
   }
+
+  /**
+   * Obtiene el nombre del chat (asunto del grupo o pushName).
+   * @param {string} jid 
+   * @returns {Promise<string|null>}
+   */
+  async getChatName(jid) {
+    if (!this.sock || !this.isReady) return null;
+    try {
+      if (jid.endsWith('@g.us')) {
+        const metadata = await this.sock.groupMetadata(jid);
+        return metadata?.subject || null;
+      }
+    } catch {
+      // Ignorar error al consultar metadata
+    }
+    return null;
+  }
 }
 
 export const whatsAppService = new WhatsAppService();
