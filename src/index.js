@@ -4,6 +4,7 @@ import { whatsAppService } from './services/WhatsAppService.js';
 import { discordService } from './services/DiscordService.js';
 import { relayEngine } from './relay/RelayEngine.js';
 import { handleMessage } from './handlers/messageHandler.js';
+import { consoleService } from './services/ConsoleService.js';
 
 async function bootstrap() {
   console.log('==================================================');
@@ -51,12 +52,16 @@ async function bootstrap() {
 
   // 4. Iniciar Motor de Retransmisión (RelayEngine)
   relayEngine.start();
+
+  // 5. Iniciar Lector de Comandos por Consola (Pterodactyl / Terminal)
+  consoleService.start();
 }
 
 // Manejo de apagado graceful (SIGINT / SIGTERM)
 async function handleShutdown(signal) {
   console.log(`\n🛑 Recibida señal ${signal}. Cerrando servicios ordenadamente...`);
   try {
+    consoleService.stop();
     relayEngine.stop();
     discordService.destroy();
     await dbService.shutdown();
