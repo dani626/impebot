@@ -157,9 +157,10 @@ export class DiscordService extends EventEmitter {
    * @param {string} channelName 
    * @param {string} categoryId 
    * @param {string} topic 
+   * @param {string|null} avatarUrl
    * @returns {Promise<{ channel: import('discord.js').TextChannel, webhook: import('discord.js').Webhook }|null>}
    */
-  async createRelayChannel(channelName, categoryId = null, topic = '') {
+  async createRelayChannel(channelName, categoryId = null, topic = '', avatarUrl = null) {
     if (!this.client || !this.isReady || !CONFIG.discord.guildId) return null;
     try {
       const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
@@ -184,9 +185,10 @@ export class DiscordService extends EventEmitter {
 
       console.log(`📢 [DiscordService] Canal creado: #${channel.name} (${channel.id})`);
 
-      // Crear Webhook para este canal
+      // Crear Webhook para este canal con avatar si está disponible
       const webhook = await channel.createWebhook({
         name: 'ImpeBot Relay',
+        avatar: avatarUrl || undefined,
         reason: 'Auto-relay WhatsApp <-> Discord',
       });
 

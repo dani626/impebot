@@ -88,6 +88,10 @@ export class RelayEngine {
 
     if (!avatarURL) {
       avatarURL = await whatsAppService.getProfilePictureUrl(sender);
+      // Si el sender es @lid y no tiene avatar directo, probar con el jid si es chat directo
+      if (!avatarURL && !jid.endsWith('@g.us') && jid !== sender) {
+        avatarURL = await whatsAppService.getProfilePictureUrl(jid);
+      }
     }
 
     // 6. Transformar mensaje a formato Discord
@@ -212,8 +216,11 @@ export class RelayEngine {
       const category = await discordService.findOrCreateCategory(categoryName);
       const categoryId = category ? category.id : null;
 
-      // 2. Crear el canal y su webhook
-      const created = await discordService.createRelayChannel(channelName, categoryId, topic);
+      // Obtener avatar del chat/grupo/usuario para el webhook inicial si existe
+      const avatarUrl = await whatsAppService.getProfilePictureUrl(jid).catch(() => null);
+
+      // 2. Crear el canal y su webhook (con avatar inicial si está disponible)
+      const created = await discordService.createRelayChannel(channelName, categoryId, topic, avatarUrl);
       if (!created || !created.channel) {
         console.error(`❌ [RelayEngine] No se pudo crear el canal de Discord para ${jid}`);
         return null;
