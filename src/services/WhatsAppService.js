@@ -117,6 +117,14 @@ export class WhatsAppService extends EventEmitter {
             ''
           ).trim();
 
+          // Determinar tipo de contenido / multimedia
+          const msgType = Object.keys(msg.message)[0] || 'desconocido';
+          const chatType = jid?.endsWith('@g.us') ? 'GRUPO' : (jid?.endsWith('@lid') ? 'DIRECTO/LID' : 'DIRECTO');
+          const previewText = text ? `"${text.length > 80 ? text.substring(0, 77) + '...' : text}"` : `[${msgType}]`;
+          const originTag = isFromMe ? '🤖 [BOT/PROPIO]' : '👤 [USUARIO]';
+
+          console.log(`📩 [WhatsApp ${chatType}] ${originTag} De: ${pushName} (${sender}) | Chat: ${jid} | Tipo: ${msgType} | Contenido: ${previewText}`);
+
           this.emit('message', {
             rawMessage: msg,
             jid,
