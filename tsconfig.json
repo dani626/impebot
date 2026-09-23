@@ -5,7 +5,9 @@
     "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "allowJs": true,
-    "checkJs": false
+    "checkJs": false,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*", "index.js"]
+  "include": ["src/**/*", "index.js"],
+  "exclude": ["node_modules"]
 }
