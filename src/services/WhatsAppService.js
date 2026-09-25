@@ -8,6 +8,7 @@ import makeWASocket, {
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { CONFIG } from '../config.js';
+import { settingsRepository } from '../database/repositories/SettingsRepository.js';
 
 export class WhatsAppService extends EventEmitter {
   constructor() {
@@ -22,12 +23,35 @@ export class WhatsAppService extends EventEmitter {
   }
 
   /**
+   * Carga el estado de presencia guardado (desde MariaDB o respaldo local).
+   */
+  async loadStoredPresence() {
+    try {
+      const saved = await settingsRepository.get('whatsapp_presence', null);
+      if (saved) {
+        const isOffline = saved === 'offline' || saved === 'unavailable';
+        this.currentPresence = isOffline ? 'unavailable' : 'available';
+        return;
+      }
+    } catch (err) {
+      console.warn('[WhatsAppService] No se pudo leer la presencia guardada:', err.message);
+    }
+
+    const envPresence = CONFIG.whatsapp?.presence;
+    const isOffline = envPresence === 'offline' || envPresence === 'unavailable';
+    this.currentPresence = isOffline ? 'unavailable' : 'available';
+  }
+
+  /**
    * Inicia el socket de Baileys y configura los listeners de eventos.
    */
   async start() {
     console.log('==================================================');
     console.log(`🚀 Iniciando ${CONFIG.botName}...`);
     console.log('==================================================');
+
+    // Cargar estado de presencia guardado previamente
+    await this.loadStoredPresence();
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
     const { version } = await fetchLatestBaileysVersion();
@@ -39,6 +63,7 @@ export class WhatsAppService extends EventEmitter {
       auth: state,
       generateHighQualityLinkPreview: true,
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
+      markOnlineOnConnect: this.currentPresence === 'available',
     });
 
     // Guardar credenciales al cambiar
@@ -92,8 +117,8 @@ export class WhatsAppService extends EventEmitter {
         console.log('✅ ¡Bot conectado exitosamente a WhatsApp!');
         console.log('==================================================\n');
 
-        // Aplicar estado de presencia configurado (por defecto 'available' / online)
-        await this.setPresence(this.currentPresence);
+        // Aplicar estado de presencia configurado / persistido (sin sobreescribir DB)
+        await this.setPresence(this.currentPresence, false);
 
         this.emit('ready', this.sock);
       }
@@ -191,11 +216,20 @@ export class WhatsAppService extends EventEmitter {
   /**
    * Actualiza el estado de presencia en WhatsApp ('available' / online o 'unavailable' / offline).
    * @param {'online'|'offline'|'available'|'unavailable'} presence
+   * @param {boolean} [persist=true] Indica si se debe guardar en base de datos y respaldo local
    * @returns {Promise<string>} Retorna el nuevo estado ('available' o 'unavailable')
    */
-  async setPresence(presence) {
+  async setPresence(presence, persist = true) {
     const isOffline = presence === 'offline' || presence === 'unavailable';
     this.currentPresence = isOffline ? 'unavailable' : 'available';
+
+    if (persist) {
+      try {
+        await settingsRepository.set('whatsapp_presence', this.currentPresence);
+      } catch (err) {
+        console.error('[WhatsAppService] Error al guardar presencia en almacenamiento:', err.message);
+      }
+    }
 
     if (this.sock && this.isReady) {
       try {

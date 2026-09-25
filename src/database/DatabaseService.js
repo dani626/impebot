@@ -91,6 +91,15 @@ class DatabaseService {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
+      await dbConn.query(`
+        CREATE TABLE IF NOT EXISTS \`bot_settings\` (
+          \`setting_key\` VARCHAR(64) NOT NULL PRIMARY KEY,
+          \`setting_value\` TEXT NOT NULL,
+          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
       console.log(`📋 [DatabaseService] Tablas requeridas verificadas / listas.`);
     } catch (err) {
       console.error(`❌ [DatabaseService] Error al verificar/crear tablas: ${err.message}`);
