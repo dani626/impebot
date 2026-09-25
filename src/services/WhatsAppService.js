@@ -62,7 +62,7 @@ export class WhatsAppService extends EventEmitter {
     }
 
     // Manejo de conexión
-    this.sock.ev.on('connection.update', (update) => {
+    this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr && (!pairingNumber || this.sock.authState.creds.registered)) {
@@ -101,51 +101,33 @@ export class WhatsAppService extends EventEmitter {
       this.emit('connection.update', update);
     });
 
-    // Eventos de mensajes entrantes
+    // Eventos de mensajes entrantes (en vivo y de sincronización)
     this.sock.ev.on('messages.upsert', async (m) => {
       try {
-        if (m.type !== 'notify') return;
+        const allowSync = CONFIG.relay?.syncMissedMessages;
+        if (m.type !== 'notify' && (!allowSync || m.type !== 'append')) return;
 
+        const isAppend = m.type === 'append';
         for (const msg of m.messages) {
-          if (!msg.message) continue;
-          this.emit('rawMessage', msg);
-
-          // Extraer información normalizada del mensaje
-          const jid = msg.key.remoteJid;
-          const sender = msg.key.participant || msg.participant || jid;
-          const pushName = msg.pushName || sender.split('@')[0];
-          const isFromMe = Boolean(msg.key.fromMe);
-
-          const text = (
-            msg.message.conversation ||
-            msg.message.extendedTextMessage?.text ||
-            msg.message.imageMessage?.caption ||
-            msg.message.videoMessage?.caption ||
-            msg.message.documentMessage?.caption ||
-            ''
-          ).trim();
-
-          // Determinar tipo de contenido / multimedia
-          const msgType = Object.keys(msg.message)[0] || 'desconocido';
-          const chatType = jid?.endsWith('@g.us') ? 'GRUPO' : (jid?.endsWith('@lid') ? 'DIRECTO/LID' : 'DIRECTO');
-          const previewText = text ? `"${text.length > 80 ? text.substring(0, 77) + '...' : text}"` : `[${msgType}]`;
-          const originTag = isFromMe ? '🤖 [BOT/PROPIO]' : '👤 [USUARIO]';
-
-          console.log(`📩 [WhatsApp ${chatType}] ${originTag} De: ${pushName} (${sender}) | Chat: ${jid} | Tipo: ${msgType} | Contenido: ${previewText}`);
-
-          this.emit('message', {
-            rawMessage: msg,
-            jid,
-            sender,
-            pushName,
-            text,
-            isFromMe,
-            messageId: msg.key.id,
-            timestamp: msg.messageTimestamp,
-          });
+          await this.processIncomingMessage(msg, isAppend);
         }
       } catch (err) {
         console.error('[WhatsAppService] Error procesando messages.upsert:', err);
+      }
+    });
+
+    // Evento de sincronización masiva de historial (offline catch-up)
+    this.sock.ev.on('messaging-history.set', async ({ messages }) => {
+      try {
+        if (!CONFIG.relay?.syncMissedMessages) return;
+        if (!Array.isArray(messages) || messages.length === 0) return;
+
+        console.log(`📥 [WhatsAppService] Recibidos ${messages.length} mensajes en sincronización de historial.`);
+        for (const msg of messages) {
+          await this.processIncomingMessage(msg, true);
+        }
+      } catch (err) {
+        console.error('[WhatsAppService] Error en messaging-history.set:', err);
       }
     });
 
@@ -229,6 +211,76 @@ export class WhatsAppService extends EventEmitter {
     }
 
     return this.currentPresence;
+  }
+
+  /**
+   * Normaliza y procesa un mensaje entrante (en tiempo real o recuperado de sincronización).
+   * @param {import('@whiskeysockets/baileys').WAMessage} msg 
+   * @param {boolean} [isHistoricalSync=false] 
+   */
+  async processIncomingMessage(msg, isHistoricalSync = false) {
+    if (!msg || !msg.message) return;
+
+    // Calcular antigüedad del mensaje
+    const rawTimestamp = msg.messageTimestamp;
+    const timestampSec =
+      typeof rawTimestamp === 'number'
+        ? rawTimestamp
+        : rawTimestamp?.low
+        ? rawTimestamp.low
+        : Number(rawTimestamp) || Math.floor(Date.now() / 1000);
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const ageSeconds = nowSec - timestampSec;
+    const maxAgeSeconds = (CONFIG.relay?.maxMissedMessageAgeHours || 24) * 3600;
+
+    // Si es un mensaje antiguo pero supera el límite de horas configurado, se omite
+    if (ageSeconds > maxAgeSeconds) {
+      return;
+    }
+
+    // Se considera atrasado/offline si viene por sincronización o si tiene más de 60 segundos
+    const isDelayed = isHistoricalSync || ageSeconds > 60;
+
+    this.emit('rawMessage', msg);
+
+    // Extraer información normalizada del mensaje
+    const jid = msg.key.remoteJid;
+    const sender = msg.key.participant || msg.participant || jid;
+    const pushName = msg.pushName || sender.split('@')[0];
+    const isFromMe = Boolean(msg.key.fromMe);
+
+    const text = (
+      msg.message.conversation ||
+      msg.message.extendedTextMessage?.text ||
+      msg.message.imageMessage?.caption ||
+      msg.message.videoMessage?.caption ||
+      msg.message.documentMessage?.caption ||
+      ''
+    ).trim();
+
+    // Determinar tipo de contenido / multimedia
+    const msgType = Object.keys(msg.message)[0] || 'desconocido';
+    const chatType = jid?.endsWith('@g.us') ? 'GRUPO' : (jid?.endsWith('@lid') ? 'DIRECTO/LID' : 'DIRECTO');
+    const previewText = text ? `"${text.length > 80 ? text.substring(0, 77) + '...' : text}"` : `[${msgType}]`;
+    const originTag = isFromMe ? '🤖 [BOT/PROPIO]' : '👤 [USUARIO]';
+    const delayTag = isDelayed ? ' ⏳ [SINCRONIZADO/OFFLINE]' : '';
+
+    console.log(
+      `📩 [WhatsApp ${chatType}]${delayTag} ${originTag} De: ${pushName} (${sender}) | Chat: ${jid} | Tipo: ${msgType} | Contenido: ${previewText}`
+    );
+
+    this.emit('message', {
+      rawMessage: msg,
+      jid,
+      sender,
+      pushName,
+      text,
+      isFromMe,
+      messageId: msg.key.id,
+      timestamp: timestampSec,
+      isDelayed,
+    });
   }
 
   /**

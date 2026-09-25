@@ -1,14 +1,15 @@
-import { AttachmentBuilder } from 'discord.js';
+import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
+import { CONFIG } from '../config.js';
 
 export class MessageTransformer {
   /**
    * Transforma un mensaje entrante de WhatsApp al formato de Discord.
    * @param {object} waMessageData Datos del mensaje de WhatsApp emitidos por WhatsAppService
-   * @returns {Promise<{ content: string, files: AttachmentBuilder[] }>}
+   * @returns {Promise<{ content: string, files: AttachmentBuilder[], embeds: EmbedBuilder[] }>}
    */
   static async toDiscord(waMessageData) {
-    const { rawMessage, text } = waMessageData;
+    const { rawMessage, text, timestamp, isDelayed } = waMessageData;
     const message = rawMessage.message;
     const files = [];
     let content = text || '';
@@ -59,7 +60,23 @@ export class MessageTransformer {
       content = `${content}\n⚠️ *(No se pudo descargar el archivo adjunto de WhatsApp)*`;
     }
 
-    return { content: content.trim(), files };
+    // Crear Embed con la fecha y hora original para mensajes recuperados o sincronizados
+    const embeds = [];
+    const mode = CONFIG.relay?.embedTimestampMode || 'missed';
+    const shouldEmbed = mode === 'all' || (mode !== 'none' && isDelayed);
+
+    if (shouldEmbed && timestamp) {
+      const msgDate = new Date(timestamp * 1000);
+      const embed = new EmbedBuilder()
+        .setColor(0x25d366) // Verde oficial de WhatsApp
+        .setDescription(`🕒 **Fecha y hora original:** <t:${timestamp}:F> (<t:${timestamp}:R>)`)
+        .setTimestamp(msgDate)
+        .setFooter({ text: 'WhatsApp • Mensaje recuperado' });
+
+      embeds.push(embed);
+    }
+
+    return { content: content.trim(), files, embeds };
   }
 
   /**

@@ -95,8 +95,13 @@ export class RelayEngine {
     }
 
     // 6. Transformar mensaje a formato Discord
-    const { content, files } = await MessageTransformer.toDiscord(waData);
-    if (!content && files.length === 0) return;
+    const { content, files, embeds } = await MessageTransformer.toDiscord(waData);
+    if (!content && files.length === 0 && (!embeds || embeds.length === 0)) return;
+
+    // Si es un mensaje recuperado de sincronización offline, pausar brevemente para evitar Rate Limits en Discord
+    if (waData.isDelayed) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
 
     // 7. Enviar a Discord (preferentemente vía Webhook para impersonar usuario)
     let discordMessageId = null;
@@ -108,6 +113,7 @@ export class RelayEngine {
           username: username.slice(0, 80),
           avatarURL: avatarURL || undefined,
           files,
+          embeds: embeds && embeds.length > 0 ? embeds : undefined,
         });
         discordMessageId = result?.id || null;
       } catch (webhookErr) {
@@ -118,8 +124,9 @@ export class RelayEngine {
     // Fallback a envío como bot si no hay webhook o falló
     if (!discordMessageId && mapping.discord_channel_id) {
       const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
-        content: `**[${username}]:** ${content}`,
+        content: content ? `**[${username}]:** ${content}` : `**[${username}]**`,
         files,
+        embeds: embeds && embeds.length > 0 ? embeds : undefined,
       });
       discordMessageId = sentMsg.id;
     }

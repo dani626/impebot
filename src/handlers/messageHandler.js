@@ -28,6 +28,19 @@ export async function handleMessage(sock, msg) {
     const prefix = CONFIG.prefixes.find(p => text.startsWith(p));
     if (!prefix) return;
 
+    // Ignorar comandos provenientes de sincronización offline antigua (más de 3 minutos de antigüedad)
+    const rawTimestamp = msg.messageTimestamp;
+    const timestampSec =
+      typeof rawTimestamp === 'number'
+        ? rawTimestamp
+        : rawTimestamp?.low
+        ? rawTimestamp.low
+        : Number(rawTimestamp) || Math.floor(Date.now() / 1000);
+    const ageSeconds = Math.floor(Date.now() / 1000) - timestampSec;
+    if (ageSeconds > 180) {
+      return;
+    }
+
     const args = text.slice(prefix.length).trim().split(/ +/);
     const command = args.shift()?.toLowerCase();
     const restText = args.join(' ');

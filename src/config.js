@@ -41,5 +41,11 @@ export const CONFIG = {
     enabled: process.env.RELAY_ENABLED !== 'false',
     messageRetentionHours: parseInt(process.env.RELAY_MESSAGE_RETENTION_HOURS, 10) || 24,
     cleanupIntervalMs: parseInt(process.env.RELAY_CLEANUP_INTERVAL_MS, 10) || 3600000,
+    // Recuperar mensajes no recibidos mientras el bot estuvo offline
+    syncMissedMessages: process.env.RELAY_SYNC_MISSED !== 'false',
+    // Máxima antigüedad en horas de los mensajes perdidos a procesar (por defecto 24h)
+    maxMissedMessageAgeHours: parseInt(process.env.RELAY_MAX_MISSED_HOURS, 10) || 24,
+    // Modo del embed con fecha/hora original: 'missed' (solo mensajes recuperados), 'all' o 'none'
+    embedTimestampMode: (process.env.RELAY_EMBED_TIMESTAMP || 'missed').toLowerCase(),
   },
 };

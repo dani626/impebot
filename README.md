@@ -14,6 +14,7 @@ Ofrece retransmisión bidireccional de mensajes (**WhatsApp ↔ Discord**) con p
 - **Soporte Multimedia**: Transforma textos, citas (quoted replies), imágenes, notas de voz, videos, stickers y documentos.
 - **Mapeo Flexible**: Mapeo canal a canal (`channel_mappings`) y usuario a usuario (`user_mappings`).
 - **Limpieza Automática**: Purgado programado de logs antiguos para optimizar almacenamiento.
+- **Recuperación Offline (Backlog)**: Captura mensajes atrasados enviados mientras el bot estuvo apagado (hasta 24h) y los retransmite a Discord con un **Embed que muestra la fecha y hora original**.
 
 ### 🖼️ Bot de Stickers (WhatsApp)
 - `!s` : Convierte imagen en sticker completo.
