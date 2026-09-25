@@ -1,6 +1,8 @@
+import { EmbedBuilder } from 'discord.js';
 import { CONFIG } from '../config.js';
 import { whatsAppService } from '../services/WhatsAppService.js';
 import { discordService } from '../services/DiscordService.js';
+import { catboxService } from '../services/CatboxService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { userMappingRepository } from '../database/repositories/UserMappingRepository.js';
 import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
@@ -103,28 +105,86 @@ export class RelayEngine {
       }
     }
 
-    const { content, files, embeds } = await MessageTransformer.toDiscord(waData, {
+    const { content, files, embeds, pendingCatboxVideo } = await MessageTransformer.toDiscord(waData, {
       channelId: mapping.discord_channel_id,
       guildId,
     });
-    if (!content && files.length === 0 && (!embeds || embeds.length === 0)) return;
+    if (!content && files.length === 0 && (!embeds || embeds.length === 0) && !pendingCatboxVideo) return;
 
     // Si es un mensaje recuperado de sincronización offline, pausar brevemente para evitar Rate Limits en Discord
     if (waData.isDelayed) {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    // 7. Enviar a Discord (preferentemente vía Webhook para impersonar usuario)
+    // 7. Procesar subida de video a Catbox si aplica
+    let catboxUploadPromise = null;
+    let immediateCatboxUrl = null;
+    let timedOut = false;
+
+    if (pendingCatboxVideo) {
+      catboxUploadPromise = catboxService.upload(
+        pendingCatboxVideo.buffer,
+        pendingCatboxVideo.fileName,
+        pendingCatboxVideo.mimetype
+      );
+
+      const timeoutMs = CONFIG.catbox?.uploadTimeoutMs || 3500;
+      let timer = null;
+      const timeoutPromise = new Promise((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve('TIMEOUT');
+        }, timeoutMs);
+      });
+
+      try {
+        const raceRes = await Promise.race([catboxUploadPromise, timeoutPromise]);
+        if (raceRes !== 'TIMEOUT') {
+          immediateCatboxUrl = raceRes;
+        }
+      } catch (uploadErr) {
+        console.error('[RelayEngine] Error inmediato al subir video a Catbox:', uploadErr.message);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
+
+    let outgoingContent = content || '';
+    const outgoingEmbeds = [...(embeds || [])];
+
+    if (immediateCatboxUrl) {
+      // Subida rápida: se incluye de inmediato la URL para que Discord renderice el reproductor de video
+      outgoingContent = outgoingContent ? `${outgoingContent}\n${immediateCatboxUrl}` : immediateCatboxUrl;
+
+      const videoEmbed = new EmbedBuilder()
+        .setColor(0x25d366)
+        .setTitle('🎬 Video adjunto')
+        .setDescription(`[▶ Reproducir / Descargar video en Catbox](${immediateCatboxUrl})`)
+        .setFooter({ text: 'Catbox.moe • WhatsApp Relay' });
+
+      outgoingEmbeds.push(videoEmbed);
+    } else if (timedOut && catboxUploadPromise) {
+      // Demoró más del timeout: enviar mensaje sin el video inmediatamente para no congestionar la cola
+      const pendingEmbed = new EmbedBuilder()
+        .setColor(0xf39c12)
+        .setTitle('🎬 Video adjunto')
+        .setDescription('⏳ *Subiendo video a Catbox en segundo plano...*')
+        .setFooter({ text: 'Catbox.moe • Procesando' });
+
+      outgoingEmbeds.push(pendingEmbed);
+    }
+
+    // 8. Enviar a Discord (preferentemente vía Webhook para impersonar usuario)
     let discordMessageId = null;
 
     if (mapping.webhook_url) {
       try {
         const result = await discordService.sendViaWebhook(mapping.webhook_url, {
-          content: content || undefined,
+          content: outgoingContent || undefined,
           username: username.slice(0, 80),
           avatarURL: avatarURL || undefined,
           files,
-          embeds: embeds && embeds.length > 0 ? embeds : undefined,
+          embeds: outgoingEmbeds.length > 0 ? outgoingEmbeds : undefined,
         });
         discordMessageId = result?.id || null;
       } catch (webhookErr) {
@@ -134,21 +194,90 @@ export class RelayEngine {
 
     // Fallback a envío como bot si no hay webhook o falló
     if (!discordMessageId && mapping.discord_channel_id) {
+      const prefixUser = `**[${username}]:**`;
+      const botContent = outgoingContent ? `${prefixUser} ${outgoingContent}` : prefixUser;
       const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
-        content: content ? `**[${username}]:** ${content}` : `**[${username}]**`,
+        content: botContent,
         files,
-        embeds: embeds && embeds.length > 0 ? embeds : undefined,
+        embeds: outgoingEmbeds.length > 0 ? outgoingEmbeds : undefined,
       });
       discordMessageId = sentMsg.id;
     }
 
-    // 8. Registrar IDs para prevenir bucles de retorno
+    // 9. Registrar IDs para prevenir bucles de retorno
     await messageLogRepository.logMessage(
       messageId,
       discordMessageId,
       mapping.id,
       'wa_to_discord'
     );
+
+    // 10. Si el video continúa subiéndose en background, actualizar el mensaje de Discord al terminar
+    if (timedOut && catboxUploadPromise && discordMessageId) {
+      const webhookUrl = mapping.webhook_url;
+      const channelId = mapping.discord_channel_id;
+      const initialEmbeds = [...(embeds || [])];
+      const baseContent = content || '';
+
+      catboxUploadPromise
+        .then(async (catboxUrl) => {
+          console.log(`🎬 [RelayEngine] Video subido a Catbox exitosamente: ${catboxUrl}. Editando mensaje en Discord (${discordMessageId})...`);
+
+          const completedEmbed = new EmbedBuilder()
+            .setColor(0x25d366)
+            .setTitle('🎬 Video adjunto')
+            .setDescription(`[▶ Reproducir / Descargar video en Catbox](${catboxUrl})`)
+            .setFooter({ text: 'Catbox.moe • WhatsApp Relay' });
+
+          const newEmbeds = [...initialEmbeds, completedEmbed];
+
+          if (webhookUrl) {
+            const newContent = baseContent ? `${baseContent}\n${catboxUrl}` : catboxUrl;
+            await discordService.editWebhookMessage(webhookUrl, discordMessageId, {
+              content: newContent,
+              embeds: newEmbeds,
+            });
+          } else if (channelId) {
+            const prefixUser = `**[${username}]:**`;
+            const updatedBotContent = baseContent
+              ? `${prefixUser} ${baseContent}\n${catboxUrl}`
+              : `${prefixUser}\n${catboxUrl}`;
+            await discordService.editChannelMessage(channelId, discordMessageId, {
+              content: updatedBotContent,
+              embeds: newEmbeds,
+            });
+          }
+        })
+        .catch(async (uploadErr) => {
+          console.error('❌ [RelayEngine] Error al subir video a Catbox en segundo plano:', uploadErr.message);
+
+          const errorEmbed = new EmbedBuilder()
+            .setColor(0xe74c3c)
+            .setTitle('🎬 Video adjunto')
+            .setDescription(`⚠️ *(No se pudo procesar el video en Catbox: ${uploadErr.message})*`)
+            .setFooter({ text: 'Catbox.moe • Error de subida' });
+
+          const newEmbeds = [...initialEmbeds, errorEmbed];
+
+          try {
+            if (webhookUrl) {
+              await discordService.editWebhookMessage(webhookUrl, discordMessageId, {
+                content: baseContent || undefined,
+                embeds: newEmbeds,
+              });
+            } else if (channelId) {
+              const prefixUser = `**[${username}]:**`;
+              const botContent = baseContent ? `${prefixUser} ${baseContent}` : prefixUser;
+              await discordService.editChannelMessage(channelId, discordMessageId, {
+                content: botContent,
+                embeds: newEmbeds,
+              });
+            }
+          } catch (editErr) {
+            console.error('[RelayEngine] Error editando mensaje tras fallo de subida a Catbox:', editErr.message);
+          }
+        });
+    }
   }
 
   /**

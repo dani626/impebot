@@ -48,4 +48,15 @@ export const CONFIG = {
     // Modo del embed con fecha/hora original: 'missed' (solo mensajes recuperados), 'all' o 'none'
     embedTimestampMode: (process.env.RELAY_EMBED_TIMESTAMP || 'missed').toLowerCase(),
   },
+
+  // Configuración de Catbox para subida y reproducción de videos
+  catbox: {
+    enabled: process.env.CATBOX_ENABLED !== 'false',
+    userhash: process.env.CATBOX_USERHASH || '',
+    alwaysUse: process.env.CATBOX_ALWAYS === 'true',
+    // Umbral en bytes para enviar directamente por Discord (por defecto 10 MB)
+    maxDirectUploadBytes: (parseInt(process.env.DISCORD_MAX_DIRECT_UPLOAD_MB, 10) || 10) * 1024 * 1024,
+    // Tiempo máximo de espera sincrónica en ms antes de enviar el mensaje previo y continuar en background
+    uploadTimeoutMs: parseInt(process.env.CATBOX_TIMEOUT_MS, 10) || 3500,
+  },
 };

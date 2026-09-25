@@ -53,6 +53,8 @@ export class MessageTransformer {
     }
 
     // Identificar y descargar archivos multimedia adjuntos
+    let pendingCatboxVideo = null;
+
     try {
       if (message?.imageMessage) {
         const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
@@ -61,7 +63,19 @@ export class MessageTransformer {
       } else if (message?.videoMessage) {
         const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
         const fileName = `video_${Date.now()}.mp4`;
-        files.push(new AttachmentBuilder(buffer, { name: fileName }));
+        const maxDirectBytes = CONFIG.catbox?.maxDirectUploadBytes || 10 * 1024 * 1024;
+        const alwaysCatbox = Boolean(CONFIG.catbox?.alwaysUse);
+
+        if (CONFIG.catbox?.enabled && (alwaysCatbox || buffer.length > maxDirectBytes)) {
+          pendingCatboxVideo = {
+            buffer,
+            fileName,
+            mimetype: message.videoMessage.mimetype || 'video/mp4',
+            sizeBytes: buffer.length,
+          };
+        } else {
+          files.push(new AttachmentBuilder(buffer, { name: fileName }));
+        }
       } else if (message?.audioMessage) {
         const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
         const isVoice = message.audioMessage.ptt;
@@ -97,7 +111,7 @@ export class MessageTransformer {
       embeds.push(embed);
     }
 
-    return { content: content.trim(), files, embeds };
+    return { content: content.trim(), files, embeds, pendingCatboxVideo };
   }
 
   /**
