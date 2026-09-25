@@ -95,7 +95,18 @@ export class RelayEngine {
     }
 
     // 6. Transformar mensaje a formato Discord
-    const { content, files, embeds } = await MessageTransformer.toDiscord(waData);
+    let guildId = CONFIG.discord.guildId;
+    if (!guildId && discordService.isReady && discordService.client) {
+      const ch = discordService.client.channels.cache.get(mapping.discord_channel_id);
+      if (ch?.guildId) {
+        guildId = ch.guildId;
+      }
+    }
+
+    const { content, files, embeds } = await MessageTransformer.toDiscord(waData, {
+      channelId: mapping.discord_channel_id,
+      guildId,
+    });
     if (!content && files.length === 0 && (!embeds || embeds.length === 0)) return;
 
     // Si es un mensaje recuperado de sincronización offline, pausar brevemente para evitar Rate Limits en Discord

@@ -1,14 +1,16 @@
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { CONFIG } from '../config.js';
+import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
 
 export class MessageTransformer {
   /**
    * Transforma un mensaje entrante de WhatsApp al formato de Discord.
    * @param {object} waMessageData Datos del mensaje de WhatsApp emitidos por WhatsAppService
+   * @param {{ channelId?: string, guildId?: string }} [contextOptions={}] Opciones de canal/servidor de Discord
    * @returns {Promise<{ content: string, files: AttachmentBuilder[], embeds: EmbedBuilder[] }>}
    */
-  static async toDiscord(waMessageData) {
+  static async toDiscord(waMessageData, contextOptions = {}) {
     const { rawMessage, text, timestamp, isDelayed } = waMessageData;
     const message = rawMessage.message;
     const files = [];
@@ -28,7 +30,26 @@ export class MessageTransformer {
         '[Multimedia]'
       ).slice(0, 100);
 
-      content = `> 💬 **${quotedSender}:** ${quotedText}\n${content}`;
+      // Buscar si el mensaje citado tiene URL en Discord mediante los logs de la BD
+      let jumpUrl = null;
+      const stanzaId = contextInfo.stanzaId;
+      if (stanzaId && contextOptions.channelId) {
+        try {
+          const logEntry = await messageLogRepository.getByWaMessageId(stanzaId);
+          if (logEntry?.discord_message_id) {
+            const guildId = contextOptions.guildId || CONFIG.discord.guildId || '@me';
+            jumpUrl = `https://discord.com/channels/${guildId}/${contextOptions.channelId}/${logEntry.discord_message_id}`;
+          }
+        } catch (e) {
+          // Ignorar error al buscar registro
+        }
+      }
+
+      if (jumpUrl) {
+        content = `> 💬 **${quotedSender}:** ${quotedText} • [Ver mensaje](${jumpUrl})\n> 🔗 ${jumpUrl}\n${content}`;
+      } else {
+        content = `> 💬 **${quotedSender}:** ${quotedText}\n${content}`;
+      }
     }
 
     // Identificar y descargar archivos multimedia adjuntos
@@ -96,7 +117,8 @@ export class MessageTransformer {
         if (repliedMsg) {
           const repliedAuthor = repliedMsg.member?.displayName || repliedMsg.author.username;
           const repliedSnippet = (repliedMsg.cleanContent || '[Archivo]').slice(0, 80);
-          baseText = `> *${repliedAuthor}:* ${repliedSnippet}\n${baseText}`;
+          const replyUrl = repliedMsg.url;
+          baseText = `> *${repliedAuthor}:* ${repliedSnippet}\n> 🔗 ${replyUrl}\n${baseText}`;
         }
       } catch (e) {
         // Si no se puede obtener el mensaje citado, continuamos sin contexto
