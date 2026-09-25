@@ -21,6 +21,7 @@ Ofrece retransmisión bidireccional de mensajes (**WhatsApp ↔ Discord**) con p
 - `!scircle` : Recorte circular.
 - `!sround` : Recorte con esquinas redondeadas.
 - `!s Pack | Autor` : Personalización de metadatos.
+- `!presence [online|offline]` : Consulta o cambia visibilidad del bot (también `!online` / `!offline`).
 - `!help` : Menú de ayuda.
 
 ---

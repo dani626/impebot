@@ -13,6 +13,12 @@ export const CONFIG = {
   // Ajustes de conexión
   botName: 'ImpeBot WhatsApp',
 
+  // Configuración de WhatsApp
+  whatsapp: {
+    // Estado de presencia por defecto: 'online' (available) u 'offline' (unavailable)
+    presence: (process.env.WA_PRESENCE || process.env.WHATSAPP_PRESENCE || 'online').toLowerCase(),
+  },
+
   // Configuración de Base de Datos (MariaDB)
   db: {
     host: process.env.DB_HOST || 'localhost',

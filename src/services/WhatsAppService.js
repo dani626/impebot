@@ -15,6 +15,10 @@ export class WhatsAppService extends EventEmitter {
     this.sock = null;
     this.isReady = false;
     this.authFolder = 'auth_info_baileys';
+    this.currentPresence =
+      CONFIG.whatsapp?.presence === 'offline' || CONFIG.whatsapp?.presence === 'unavailable'
+        ? 'unavailable'
+        : 'available';
   }
 
   /**
@@ -87,6 +91,10 @@ export class WhatsAppService extends EventEmitter {
         console.log('\n==================================================');
         console.log('✅ ¡Bot conectado exitosamente a WhatsApp!');
         console.log('==================================================\n');
+
+        // Aplicar estado de presencia configurado (por defecto 'available' / online)
+        await this.setPresence(this.currentPresence);
+
         this.emit('ready', this.sock);
       }
 
@@ -196,6 +204,42 @@ export class WhatsAppService extends EventEmitter {
       // Ignorar error al consultar metadata
     }
     return null;
+  }
+
+  /**
+   * Actualiza el estado de presencia en WhatsApp ('available' / online o 'unavailable' / offline).
+   * @param {'online'|'offline'|'available'|'unavailable'} presence
+   * @returns {Promise<string>} Retorna el nuevo estado ('available' o 'unavailable')
+   */
+  async setPresence(presence) {
+    const isOffline = presence === 'offline' || presence === 'unavailable';
+    this.currentPresence = isOffline ? 'unavailable' : 'available';
+
+    if (this.sock && this.isReady) {
+      try {
+        await this.sock.sendPresenceUpdate(this.currentPresence);
+        console.log(
+          `📱 [WhatsAppService] Presencia establecida en WhatsApp: ${
+            this.currentPresence === 'available' ? '🟢 ONLINE (available)' : '⚪ OFFLINE (unavailable)'
+          }`
+        );
+      } catch (err) {
+        console.error('[WhatsAppService] Error al actualizar presencia en WhatsApp:', err.message);
+      }
+    }
+
+    return this.currentPresence;
+  }
+
+  /**
+   * Retorna el estado actual de presencia en formato amigable.
+   * @returns {{ status: 'available'|'unavailable', label: 'online'|'offline' }}
+   */
+  getPresence() {
+    return {
+      status: this.currentPresence,
+      label: this.currentPresence === 'available' ? 'online' : 'offline',
+    };
   }
 }
 

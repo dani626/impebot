@@ -1,5 +1,6 @@
 import { CONFIG } from '../config.js';
 import { getMediaFromMessage, createSticker } from '../services/stickerService.js';
+import { whatsAppService } from '../services/WhatsAppService.js';
 
 /**
  * Manejador principal de mensajes entrantes.
@@ -83,6 +84,65 @@ export async function handleMessage(sock, msg) {
         break;
       }
 
+      case 'presence':
+      case 'presencia': {
+        const mode = args[0]?.toLowerCase();
+        if (mode === 'online' || mode === 'available' || mode === 'on') {
+          await whatsAppService.setPresence('available');
+          await sock.sendMessage(
+            jid,
+            { text: '🟢 *WhatsApp:* Modo cambiado a *ONLINE* (En línea / Visible).' },
+            { quoted: msg }
+          );
+        } else if (
+          mode === 'offline' ||
+          mode === 'unavailable' ||
+          mode === 'off' ||
+          mode === 'invisible'
+        ) {
+          await whatsAppService.setPresence('unavailable');
+          await sock.sendMessage(
+            jid,
+            { text: '⚪ *WhatsApp:* Modo cambiado a *OFFLINE* (Invisible / Desconectado).' },
+            { quoted: msg }
+          );
+        } else {
+          const { label } = whatsAppService.getPresence();
+          await sock.sendMessage(
+            jid,
+            {
+              text:
+                `📱 *Estado actual en WhatsApp:* ${label === 'online' ? '🟢 ONLINE' : '⚪ OFFLINE (invisible)'}\n\n` +
+                `💡 *Para cambiarlo usa:*\n` +
+                `• \`${prefix}presence online\`\n` +
+                `• \`${prefix}presence offline\``,
+            },
+            { quoted: msg }
+          );
+        }
+        break;
+      }
+
+      case 'online': {
+        await whatsAppService.setPresence('available');
+        await sock.sendMessage(
+          jid,
+          { text: '🟢 *WhatsApp:* Modo cambiado a *ONLINE* (En línea / Visible).' },
+          { quoted: msg }
+        );
+        break;
+      }
+
+      case 'offline': {
+        await whatsAppService.setPresence('unavailable');
+        await sock.sendMessage(
+          jid,
+          { text: '⚪ *WhatsApp:* Modo cambiado a *OFFLINE* (Invisible / Desconectado).' },
+          { quoted: msg }
+        );
+        break;
+      }
+
       case 'help':
       case 'menu':
       case 'bot': {
@@ -92,6 +152,9 @@ export async function handleMessage(sock, msg) {
           `• \`!scrop\` : Sticker recortado en cuadrado.\n` +
           `• \`!scircle\` : Sticker recortado en círculo.\n` +
           `• \`!s Mi Pack | Mi Nombre\` : Personaliza los metadatos del sticker.\n\n` +
+          `⚙️ *Comandos de Estado:*\n` +
+          `• \`!presence [online|offline]\` : Consulta o cambia visibilidad del bot.\n` +
+          `• \`!online\` / \`!offline\` : Atajos directos para cambiar estado.\n\n` +
           `📌 *¿Cómo usarlo?*\n` +
           `Envía una imagen con el comando en la leyenda, o responde a cualquier foto enviada con el comando \`!s\`.`;
 

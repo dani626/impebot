@@ -82,6 +82,12 @@ export class ConsoleService {
         await this.checkPings();
         break;
 
+      case 'presence':
+      case 'presencia':
+      case 'wapresence':
+        await this.handlePresenceCommand(args);
+        break;
+
       case 'eval':
         this.evaluateCode(args.join(' '));
         break;
@@ -118,6 +124,7 @@ export class ConsoleService {
     console.log('  ping               - Mide latencia con Discord y MariaDB');
     console.log('  saywa <jid> <txt>  - Envía un mensaje de WhatsApp a un JID/número');
     console.log('  saydc <id> <txt>   - Envía un mensaje directo a un canal de Discord');
+    console.log('  presence [modo]    - Consulta o cambia presencia de WhatsApp (online / offline)');
     console.log('  eval <código>      - Ejecuta código JS en el contexto del bot');
     console.log('  clear / cls        - Limpia la pantalla de la consola');
     console.log('  stop / exit        - Detiene el servidor ordenadamente (graceful shutdown)');
@@ -145,7 +152,9 @@ export class ConsoleService {
     const waConnected = Boolean(whatsAppService.isReady && whatsAppService.sock);
     console.log(`📱 WhatsApp: ${waConnected ? '✅ CONECTADO' : '❌ DESCONECTADO'}`);
     if (waConnected && whatsAppService.sock?.user) {
+      const presenceInfo = whatsAppService.getPresence();
       console.log(`   └─ Usuario: ${whatsAppService.sock.user.id || whatsAppService.sock.user.name || 'OK'}`);
+      console.log(`   └─ Presencia: ${presenceInfo.label === 'online' ? '🟢 ONLINE' : '⚪ OFFLINE (invisible)'}`);
     }
 
     // Discord
@@ -299,6 +308,35 @@ export class ConsoleService {
       }
     } catch (err) {
       console.error('❌ [Eval Error]:', err.message);
+    }
+  }
+
+  /**
+   * Gestiona la consulta o cambio de presencia en WhatsApp desde la consola.
+   * @param {string[]} args 
+   */
+  async handlePresenceCommand(args) {
+    if (args.length === 0) {
+      const { label, status } = whatsAppService.getPresence();
+      console.log(`\n📱 [WhatsApp] Estado actual de presencia: ${label.toUpperCase()} (${status})`);
+      console.log('💡 Cambiar estado: presence online | presence offline\n');
+      return;
+    }
+
+    const mode = args[0].toLowerCase();
+    if (mode === 'online' || mode === 'available' || mode === 'on') {
+      await whatsAppService.setPresence('available');
+      console.log('✅ [Consola] Presencia de WhatsApp cambiada a ONLINE (disponible).');
+    } else if (
+      mode === 'offline' ||
+      mode === 'unavailable' ||
+      mode === 'off' ||
+      mode === 'invisible'
+    ) {
+      await whatsAppService.setPresence('unavailable');
+      console.log('✅ [Consola] Presencia de WhatsApp cambiada a OFFLINE (invisible / desconectado).');
+    } else {
+      console.log('⚠️ [Consola] Modo no reconocido. Uso: presence online | presence offline');
     }
   }
 
