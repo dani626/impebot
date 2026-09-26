@@ -4,3 +4,4 @@ auth_info_baileys/
 .DS_Store
 .env
 bot_settings.json
+.cursor/

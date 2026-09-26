@@ -7,6 +7,104 @@ import { channelMappingRepository } from '../database/repositories/ChannelMappin
 import { userMappingRepository } from '../database/repositories/UserMappingRepository.js';
 import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
 import { MessageTransformer } from './MessageTransformer.js';
+import { isBotCommand } from '../utils/commands.js';
+
+/**
+ * Genera embeds formateados para estados de subida a Catbox.
+ * @param {'ready'|'pending'|'error'} status 
+ * @param {{ url?: string, error?: string }} [data={}] 
+ * @returns {EmbedBuilder}
+ */
+function buildCatboxEmbed(status, data = {}) {
+  const embed = new EmbedBuilder().setTitle('🎬 Video adjunto');
+  if (status === 'ready') {
+    return embed
+      .setColor(0x25d366)
+      .setDescription(`[▶ Reproducir / Descargar video en Catbox](${data.url})`)
+      .setFooter({ text: 'Catbox.moe • WhatsApp Relay' });
+  }
+  if (status === 'pending') {
+    return embed
+      .setColor(0xf39c12)
+      .setDescription('⏳ *Subiendo video a Catbox en segundo plano...*')
+      .setFooter({ text: 'Catbox.moe • Procesando' });
+  }
+  if (status === 'error') {
+    return embed
+      .setColor(0xe74c3c)
+      .setDescription(`⚠️ *(No se pudo procesar el video en Catbox: ${data.error || 'error desconocido'})*`)
+      .setFooter({ text: 'Catbox.moe • Error de subida' });
+  }
+  return embed;
+}
+
+/**
+ * Formatea el contenido para envío como bot cuando no se usa webhook.
+ * @param {string} username 
+ * @param {string} content 
+ * @returns {string}
+ */
+function formatDiscordBotContent(username, content) {
+  const prefixUser = `**[${username}]:**`;
+  return content ? `${prefixUser} ${content}` : prefixUser;
+}
+
+/**
+ * Entrega un mensaje a Discord prefiriendo Webhook con fallback al canal directo.
+ * @param {object} mapping 
+ * @param {object} payload 
+ * @returns {Promise<string|null>} ID del mensaje en Discord
+ */
+async function deliverToDiscord(mapping, { content, username, avatarURL, files, embeds }) {
+  if (mapping.webhook_url) {
+    try {
+      const result = await discordService.sendViaWebhook(mapping.webhook_url, {
+        content: content || undefined,
+        username: username.slice(0, 80),
+        avatarURL: avatarURL || undefined,
+        files,
+        embeds: embeds?.length > 0 ? embeds : undefined,
+      });
+      if (result?.id) return result.id;
+    } catch (webhookErr) {
+      console.warn(`[RelayEngine] Fallo al enviar vía Webhook, intentando canal directo: ${webhookErr.message}`);
+    }
+  }
+
+  if (mapping.discord_channel_id) {
+    const botContent = formatDiscordBotContent(username, content);
+    const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
+      content: botContent,
+      files,
+      embeds: embeds?.length > 0 ? embeds : undefined,
+    });
+    return sentMsg?.id || null;
+  }
+
+  return null;
+}
+
+/**
+ * Edita un mensaje en Discord ya sea por Webhook o por canal directo.
+ * @param {object} mapping 
+ * @param {string} messageId 
+ * @param {object} payload 
+ */
+async function updateDiscordMessage(mapping, messageId, { content, username, embeds }) {
+  if (mapping.webhook_url) {
+    return await discordService.editWebhookMessage(mapping.webhook_url, messageId, {
+      content: content || undefined,
+      embeds,
+    });
+  }
+  if (mapping.discord_channel_id) {
+    const botContent = formatDiscordBotContent(username, content);
+    return await discordService.editChannelMessage(mapping.discord_channel_id, messageId, {
+      content: botContent,
+      embeds,
+    });
+  }
+}
 
 export class RelayEngine {
   constructor() {
@@ -62,8 +160,8 @@ export class RelayEngine {
     // 1. Ignorar mensajes propios salvo RELAY_OWN_MESSAGES=true
     if (isFromMe && !CONFIG.relay.relayOwnMessages) return;
 
-    // 2. Si el mensaje es un comando del bot de stickers (!s, !help, etc.), no retransmitirlo a Discord
-    if (text && CONFIG.prefixes.some((p) => text.startsWith(p))) {
+    // 2. Si el mensaje es un comando del bot (!s, !help, !presence, etc.), no retransmitirlo a Discord
+    if (isBotCommand(text)) {
       return;
     }
 
@@ -153,56 +251,22 @@ export class RelayEngine {
     const outgoingEmbeds = [...(embeds || [])];
 
     if (immediateCatboxUrl) {
-      // Subida rápida: se incluye de inmediato la URL para que Discord renderice el reproductor de video
       outgoingContent = outgoingContent ? `${outgoingContent}\n${immediateCatboxUrl}` : immediateCatboxUrl;
-
-      const videoEmbed = new EmbedBuilder()
-        .setColor(0x25d366)
-        .setTitle('🎬 Video adjunto')
-        .setDescription(`[▶ Reproducir / Descargar video en Catbox](${immediateCatboxUrl})`)
-        .setFooter({ text: 'Catbox.moe • WhatsApp Relay' });
-
-      outgoingEmbeds.push(videoEmbed);
+      outgoingEmbeds.push(buildCatboxEmbed('ready', { url: immediateCatboxUrl }));
     } else if (timedOut && catboxUploadPromise) {
-      // Demoró más del timeout: enviar mensaje sin el video inmediatamente para no congestionar la cola
-      const pendingEmbed = new EmbedBuilder()
-        .setColor(0xf39c12)
-        .setTitle('🎬 Video adjunto')
-        .setDescription('⏳ *Subiendo video a Catbox en segundo plano...*')
-        .setFooter({ text: 'Catbox.moe • Procesando' });
-
-      outgoingEmbeds.push(pendingEmbed);
+      outgoingEmbeds.push(buildCatboxEmbed('pending'));
     }
 
     // 8. Enviar a Discord (preferentemente vía Webhook para impersonar usuario)
-    let discordMessageId = null;
+    const discordMessageId = await deliverToDiscord(mapping, {
+      content: outgoingContent,
+      username,
+      avatarURL,
+      files,
+      embeds: outgoingEmbeds,
+    });
 
-    if (mapping.webhook_url) {
-      try {
-        const result = await discordService.sendViaWebhook(mapping.webhook_url, {
-          content: outgoingContent || undefined,
-          username: username.slice(0, 80),
-          avatarURL: avatarURL || undefined,
-          files,
-          embeds: outgoingEmbeds.length > 0 ? outgoingEmbeds : undefined,
-        });
-        discordMessageId = result?.id || null;
-      } catch (webhookErr) {
-        console.warn(`[RelayEngine] Fallo al enviar vía Webhook, intentando canal directo: ${webhookErr.message}`);
-      }
-    }
-
-    // Fallback a envío como bot si no hay webhook o falló
-    if (!discordMessageId && mapping.discord_channel_id) {
-      const prefixUser = `**[${username}]:**`;
-      const botContent = outgoingContent ? `${prefixUser} ${outgoingContent}` : prefixUser;
-      const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
-        content: botContent,
-        files,
-        embeds: outgoingEmbeds.length > 0 ? outgoingEmbeds : undefined,
-      });
-      discordMessageId = sentMsg.id;
-    }
+    if (!discordMessageId) return;
 
     // 9. Registrar IDs para prevenir bucles de retorno
     await messageLogRepository.logMessage(
@@ -213,66 +277,30 @@ export class RelayEngine {
     );
 
     // 10. Si el video continúa subiéndose en background, actualizar el mensaje de Discord al terminar
-    if (timedOut && catboxUploadPromise && discordMessageId) {
-      const webhookUrl = mapping.webhook_url;
-      const channelId = mapping.discord_channel_id;
+    if (timedOut && catboxUploadPromise) {
       const initialEmbeds = [...(embeds || [])];
       const baseContent = content || '';
 
       catboxUploadPromise
         .then(async (catboxUrl) => {
           console.log(`🎬 [RelayEngine] Video subido a Catbox exitosamente: ${catboxUrl}. Editando mensaje en Discord (${discordMessageId})...`);
-
-          const completedEmbed = new EmbedBuilder()
-            .setColor(0x25d366)
-            .setTitle('🎬 Video adjunto')
-            .setDescription(`[▶ Reproducir / Descargar video en Catbox](${catboxUrl})`)
-            .setFooter({ text: 'Catbox.moe • WhatsApp Relay' });
-
-          const newEmbeds = [...initialEmbeds, completedEmbed];
-
-          if (webhookUrl) {
-            const newContent = baseContent ? `${baseContent}\n${catboxUrl}` : catboxUrl;
-            await discordService.editWebhookMessage(webhookUrl, discordMessageId, {
-              content: newContent,
-              embeds: newEmbeds,
-            });
-          } else if (channelId) {
-            const prefixUser = `**[${username}]:**`;
-            const updatedBotContent = baseContent
-              ? `${prefixUser} ${baseContent}\n${catboxUrl}`
-              : `${prefixUser}\n${catboxUrl}`;
-            await discordService.editChannelMessage(channelId, discordMessageId, {
-              content: updatedBotContent,
-              embeds: newEmbeds,
-            });
-          }
+          const newContent = baseContent ? `${baseContent}\n${catboxUrl}` : catboxUrl;
+          const newEmbeds = [...initialEmbeds, buildCatboxEmbed('ready', { url: catboxUrl })];
+          await updateDiscordMessage(mapping, discordMessageId, {
+            content: newContent,
+            username,
+            embeds: newEmbeds,
+          });
         })
         .catch(async (uploadErr) => {
           console.error('❌ [RelayEngine] Error al subir video a Catbox en segundo plano:', uploadErr.message);
-
-          const errorEmbed = new EmbedBuilder()
-            .setColor(0xe74c3c)
-            .setTitle('🎬 Video adjunto')
-            .setDescription(`⚠️ *(No se pudo procesar el video en Catbox: ${uploadErr.message})*`)
-            .setFooter({ text: 'Catbox.moe • Error de subida' });
-
-          const newEmbeds = [...initialEmbeds, errorEmbed];
-
+          const newEmbeds = [...initialEmbeds, buildCatboxEmbed('error', { error: uploadErr.message })];
           try {
-            if (webhookUrl) {
-              await discordService.editWebhookMessage(webhookUrl, discordMessageId, {
-                content: baseContent || undefined,
-                embeds: newEmbeds,
-              });
-            } else if (channelId) {
-              const prefixUser = `**[${username}]:**`;
-              const botContent = baseContent ? `${prefixUser} ${baseContent}` : prefixUser;
-              await discordService.editChannelMessage(channelId, discordMessageId, {
-                content: botContent,
-                embeds: newEmbeds,
-              });
-            }
+            await updateDiscordMessage(mapping, discordMessageId, {
+              content: baseContent,
+              username,
+              embeds: newEmbeds,
+            });
           } catch (editErr) {
             console.error('[RelayEngine] Error editando mensaje tras fallo de subida a Catbox:', editErr.message);
           }

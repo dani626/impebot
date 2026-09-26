@@ -5,6 +5,7 @@ import { discordService } from './DiscordService.js';
 import { dbService } from '../database/DatabaseService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { relayEngine } from '../relay/RelayEngine.js';
+import { normalizePresence } from '../utils/whatsappMessage.js';
 
 export class ConsoleService {
   constructor() {
@@ -322,16 +323,11 @@ export class ConsoleService {
       return;
     }
 
-    const mode = args[0].toLowerCase();
-    if (mode === 'online' || mode === 'available' || mode === 'on') {
+    const mode = normalizePresence(args[0]);
+    if (mode === 'available') {
       await whatsAppService.setPresence('available');
       console.log('✅ [Consola] Presencia de WhatsApp cambiada a ONLINE (disponible).');
-    } else if (
-      mode === 'offline' ||
-      mode === 'unavailable' ||
-      mode === 'off' ||
-      mode === 'invisible'
-    ) {
+    } else if (mode === 'unavailable') {
       await whatsAppService.setPresence('unavailable');
       console.log('✅ [Consola] Presencia de WhatsApp cambiada a OFFLINE (invisible / desconectado).');
     } else {

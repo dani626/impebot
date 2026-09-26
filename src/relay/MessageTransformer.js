@@ -2,6 +2,15 @@ import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { CONFIG } from '../config.js';
 import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
+import { extractWaText, getContextInfo } from '../utils/whatsappMessage.js';
+
+const MEDIA_DEFINITIONS = {
+  imageMessage: () => ({ ext: 'jpg', prefix: 'image' }),
+  videoMessage: (msg) => ({ ext: 'mp4', prefix: 'video', isVideo: true, mimetype: msg.mimetype || 'video/mp4' }),
+  audioMessage: (msg) => ({ ext: 'ogg', prefix: msg.ptt ? 'voice' : 'audio' }),
+  stickerMessage: () => ({ ext: 'webp', prefix: 'sticker' }),
+  documentMessage: (msg) => ({ fileName: msg.fileName || `document_${Date.now()}` }),
+};
 
 export class MessageTransformer {
   /**
@@ -17,18 +26,11 @@ export class MessageTransformer {
     let content = text || '';
 
     // Manejo de respuesta citada (quoted context)
-    const contextInfo = message?.extendedTextMessage?.contextInfo ||
-                        message?.imageMessage?.contextInfo ||
-                        message?.videoMessage?.contextInfo;
+    const contextInfo = getContextInfo(message);
 
     if (contextInfo?.quotedMessage) {
       const quotedSender = contextInfo.participant?.split('@')[0] || 'alguien';
-      const quotedText = (
-        contextInfo.quotedMessage.conversation ||
-        contextInfo.quotedMessage.extendedTextMessage?.text ||
-        contextInfo.quotedMessage.imageMessage?.caption ||
-        '[Multimedia]'
-      ).slice(0, 100);
+      const quotedText = (extractWaText(contextInfo.quotedMessage) || '[Multimedia]').slice(0, 100);
 
       // Buscar si el mensaje citado tiene URL en Discord mediante los logs de la BD
       let jumpUrl = null;
@@ -40,7 +42,7 @@ export class MessageTransformer {
             const guildId = contextOptions.guildId || CONFIG.discord.guildId || '@me';
             jumpUrl = `https://discord.com/channels/${guildId}/${contextOptions.channelId}/${logEntry.discord_message_id}`;
           }
-        } catch (e) {
+        } catch {
           // Ignorar error al buscar registro
         }
       }
@@ -54,45 +56,35 @@ export class MessageTransformer {
 
     // Identificar y descargar archivos multimedia adjuntos
     let pendingCatboxVideo = null;
+    const mediaKey = Object.keys(MEDIA_DEFINITIONS).find((key) => message?.[key]);
 
-    try {
-      if (message?.imageMessage) {
+    if (mediaKey) {
+      try {
         const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const fileName = `image_${Date.now()}.jpg`;
-        files.push(new AttachmentBuilder(buffer, { name: fileName }));
-      } else if (message?.videoMessage) {
-        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const fileName = `video_${Date.now()}.mp4`;
-        const maxDirectBytes = CONFIG.catbox?.maxDirectUploadBytes || 10 * 1024 * 1024;
-        const alwaysCatbox = Boolean(CONFIG.catbox?.alwaysUse);
+        const info = MEDIA_DEFINITIONS[mediaKey](message[mediaKey]);
+        const fileName = info.fileName || `${info.prefix}_${Date.now()}.${info.ext}`;
 
-        if (CONFIG.catbox?.enabled && (alwaysCatbox || buffer.length > maxDirectBytes)) {
-          pendingCatboxVideo = {
-            buffer,
-            fileName,
-            mimetype: message.videoMessage.mimetype || 'video/mp4',
-            sizeBytes: buffer.length,
-          };
+        if (info.isVideo) {
+          const maxDirectBytes = CONFIG.catbox?.maxDirectUploadBytes || 10 * 1024 * 1024;
+          const alwaysCatbox = Boolean(CONFIG.catbox?.alwaysUse);
+
+          if (CONFIG.catbox?.enabled && (alwaysCatbox || buffer.length > maxDirectBytes)) {
+            pendingCatboxVideo = {
+              buffer,
+              fileName,
+              mimetype: info.mimetype,
+              sizeBytes: buffer.length,
+            };
+          } else {
+            files.push(new AttachmentBuilder(buffer, { name: fileName }));
+          }
         } else {
           files.push(new AttachmentBuilder(buffer, { name: fileName }));
         }
-      } else if (message?.audioMessage) {
-        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const isVoice = message.audioMessage.ptt;
-        const fileName = `${isVoice ? 'voice' : 'audio'}_${Date.now()}.ogg`;
-        files.push(new AttachmentBuilder(buffer, { name: fileName }));
-      } else if (message?.stickerMessage) {
-        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const fileName = `sticker_${Date.now()}.webp`;
-        files.push(new AttachmentBuilder(buffer, { name: fileName }));
-      } else if (message?.documentMessage) {
-        const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const fileName = message.documentMessage.fileName || `document_${Date.now()}`;
-        files.push(new AttachmentBuilder(buffer, { name: fileName }));
+      } catch (mediaError) {
+        console.error('[MessageTransformer] Error descargando multimedia de WhatsApp:', mediaError.message);
+        content = `${content}\n⚠️ *(No se pudo descargar el archivo adjunto de WhatsApp)*`;
       }
-    } catch (mediaError) {
-      console.error('[MessageTransformer] Error descargando multimedia de WhatsApp:', mediaError.message);
-      content = `${content}\n⚠️ *(No se pudo descargar el archivo adjunto de WhatsApp)*`;
     }
 
     // Crear Embed con la fecha y hora original para mensajes recuperados o sincronizados

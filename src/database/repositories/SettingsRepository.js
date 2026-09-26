@@ -49,14 +49,7 @@ export class SettingsRepository {
         [key]
       );
       if (rows && rows.length > 0 && rows[0].setting_value !== undefined) {
-        const val = rows[0].setting_value;
-        // Sincronizar en archivo local por redundancia
-        const localData = this._readLocal();
-        if (localData[key] !== val) {
-          localData[key] = val;
-          this._writeLocal(localData);
-        }
-        return val;
+        return rows[0].setting_value;
       }
     } catch {
       // Si MariaDB no está lista o falla la consulta, continuar con respaldo local

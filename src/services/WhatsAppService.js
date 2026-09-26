@@ -8,6 +8,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { CONFIG } from '../config.js';
 import { settingsRepository } from '../database/repositories/SettingsRepository.js';
+import { extractWaText, parseWaTimestamp, normalizePresence } from '../utils/whatsappMessage.js';
 
 export class WhatsAppService extends EventEmitter {
   constructor() {
@@ -15,10 +16,7 @@ export class WhatsAppService extends EventEmitter {
     this.sock = null;
     this.isReady = false;
     this.authFolder = 'auth_info_baileys';
-    this.currentPresence =
-      CONFIG.whatsapp?.presence === 'offline' || CONFIG.whatsapp?.presence === 'unavailable'
-        ? 'unavailable'
-        : 'available';
+    this.currentPresence = normalizePresence(CONFIG.whatsapp?.presence) || 'available';
   }
 
   /**
@@ -210,8 +208,7 @@ export class WhatsAppService extends EventEmitter {
    * @returns {Promise<string>} Retorna el nuevo estado ('available' o 'unavailable')
    */
   async setPresence(presence, persist = true) {
-    const isOffline = presence === 'offline' || presence === 'unavailable';
-    this.currentPresence = isOffline ? 'unavailable' : 'available';
+    this.currentPresence = normalizePresence(presence) || 'available';
 
     if (persist) {
       try {
@@ -246,14 +243,7 @@ export class WhatsAppService extends EventEmitter {
     if (!msg || !msg.message) return;
 
     // Calcular antigüedad del mensaje
-    const rawTimestamp = msg.messageTimestamp;
-    const timestampSec =
-      typeof rawTimestamp === 'number'
-        ? rawTimestamp
-        : rawTimestamp?.low
-        ? rawTimestamp.low
-        : Number(rawTimestamp) || Math.floor(Date.now() / 1000);
-
+    const timestampSec = parseWaTimestamp(msg);
     const nowSec = Math.floor(Date.now() / 1000);
     const ageSeconds = nowSec - timestampSec;
     const maxAgeSeconds = (CONFIG.relay?.maxMissedMessageAgeHours || 24) * 3600;
@@ -273,15 +263,7 @@ export class WhatsAppService extends EventEmitter {
     const sender = msg.key.participant || msg.participant || jid;
     const pushName = msg.pushName || sender.split('@')[0];
     const isFromMe = Boolean(msg.key.fromMe);
-
-    const text = (
-      msg.message.conversation ||
-      msg.message.extendedTextMessage?.text ||
-      msg.message.imageMessage?.caption ||
-      msg.message.videoMessage?.caption ||
-      msg.message.documentMessage?.caption ||
-      ''
-    ).trim();
+    const text = extractWaText(msg);
 
     // Determinar tipo de contenido / multimedia
     const msgType = Object.keys(msg.message)[0] || 'desconocido';

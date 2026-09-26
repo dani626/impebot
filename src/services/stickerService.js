@@ -1,6 +1,25 @@
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 import { CONFIG } from '../config.js';
+import { getContextInfo } from '../utils/whatsappMessage.js';
+
+/**
+ * Helper para construir la estructura de mensaje citado para descarga multimedia.
+ * @private
+ */
+function quotedMediaTarget(remoteJid, contextInfo, innerMessage) {
+  return {
+    mediaMessage: {
+      key: {
+        remoteJid,
+        id: contextInfo.stanzaId,
+        participant: contextInfo.participant,
+      },
+      message: innerMessage,
+    },
+    type: 'image',
+  };
+}
 
 /**
  * Obtiene el mensaje multimedia (imagen) ya sea directo o desde una respuesta (quoted).
@@ -8,7 +27,7 @@ import { CONFIG } from '../config.js';
  * @returns {object|null} El objeto de mensaje multimedia y el tipo.
  */
 export function getMediaFromMessage(msg) {
-  const message = msg.message;
+  const message = msg?.message;
   if (!message) return null;
 
   // 1. Imagen directa
@@ -17,54 +36,21 @@ export function getMediaFromMessage(msg) {
   }
 
   // 2. Imagen dentro de viewOnce (Ver una sola vez)
-  if (message.viewOnceMessage?.message?.imageMessage) {
-    return { mediaMessage: { message: message.viewOnceMessage.message }, type: 'image' };
-  }
-  if (message.viewOnceMessageV2?.message?.imageMessage) {
-    return { mediaMessage: { message: message.viewOnceMessageV2.message }, type: 'image' };
+  const viewOnceMsg = message.viewOnceMessage?.message || message.viewOnceMessageV2?.message;
+  if (viewOnceMsg?.imageMessage) {
+    return { mediaMessage: { message: viewOnceMsg }, type: 'image' };
   }
 
   // 3. Respuesta a una imagen (Quoted message)
-  const quoted = message.extendedTextMessage?.contextInfo?.quotedMessage;
+  const contextInfo = getContextInfo(message);
+  const quoted = contextInfo?.quotedMessage;
   if (quoted) {
     if (quoted.imageMessage) {
-      return {
-        mediaMessage: {
-          key: {
-            remoteJid: msg.key.remoteJid,
-            id: message.extendedTextMessage.contextInfo.stanzaId,
-            participant: message.extendedTextMessage.contextInfo.participant
-          },
-          message: quoted
-        },
-        type: 'image'
-      };
+      return quotedMediaTarget(msg.key.remoteJid, contextInfo, quoted);
     }
-    if (quoted.viewOnceMessage?.message?.imageMessage) {
-      return {
-        mediaMessage: {
-          key: {
-            remoteJid: msg.key.remoteJid,
-            id: message.extendedTextMessage.contextInfo.stanzaId,
-            participant: message.extendedTextMessage.contextInfo.participant
-          },
-          message: quoted.viewOnceMessage.message
-        },
-        type: 'image'
-      };
-    }
-    if (quoted.viewOnceMessageV2?.message?.imageMessage) {
-      return {
-        mediaMessage: {
-          key: {
-            remoteJid: msg.key.remoteJid,
-            id: message.extendedTextMessage.contextInfo.stanzaId,
-            participant: message.extendedTextMessage.contextInfo.participant
-          },
-          message: quoted.viewOnceMessageV2.message
-        },
-        type: 'image'
-      };
+    const quotedViewOnce = quoted.viewOnceMessage?.message || quoted.viewOnceMessageV2?.message;
+    if (quotedViewOnce?.imageMessage) {
+      return quotedMediaTarget(msg.key.remoteJid, contextInfo, quotedViewOnce);
     }
   }
 
