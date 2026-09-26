@@ -29,18 +29,21 @@ CREATE TABLE IF NOT EXISTS `user_mappings` (
   INDEX `idx_user_discord_id` (`discord_user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 3. Tabla de Logs de Mensajes para Prevención de Bucles
-CREATE TABLE IF NOT EXISTS `message_logs` (
+-- 3. Tabla de Mapeo de Mensajes entre Plataformas (WhatsApp, Discord, etc.)
+CREATE TABLE IF NOT EXISTS `message_mappings` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `wa_message_id` VARCHAR(128) DEFAULT NULL,
   `discord_message_id` VARCHAR(64) DEFAULT NULL,
   `channel_mapping_id` INT DEFAULT NULL,
-  `direction` ENUM('wa_to_discord', 'discord_to_wa') NOT NULL,
+  `origin_platform` VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+  `sender_name` VARCHAR(128) DEFAULT NULL,
+  `content` TEXT DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX `idx_wa_message_id` (`wa_message_id`),
   INDEX `idx_discord_message_id` (`discord_message_id`),
+  INDEX `idx_origin_platform` (`origin_platform`),
   INDEX `idx_created_at` (`created_at`),
-  CONSTRAINT `fk_mapping_log` FOREIGN KEY (`channel_mapping_id`) REFERENCES `channel_mappings` (`id`) ON DELETE SET NULL
+  CONSTRAINT `fk_channel_mapping_message` FOREIGN KEY (`channel_mapping_id`) REFERENCES `channel_mappings` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Ajustes persistentes del bot (presencia de WhatsApp, etc.)

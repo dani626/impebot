@@ -1,7 +1,7 @@
 import { AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import { CONFIG } from '../config.js';
-import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
+import { messageMappingRepository } from '../database/repositories/MessageMappingRepository.js';
 import { extractWaText, getContextInfo } from '../utils/whatsappMessage.js';
 
 const MEDIA_DEFINITIONS = {
@@ -32,12 +32,12 @@ export class MessageTransformer {
       const quotedSender = contextInfo.participant?.split('@')[0] || 'alguien';
       const quotedText = (extractWaText(contextInfo.quotedMessage) || '[Multimedia]').slice(0, 100);
 
-      // Buscar si el mensaje citado tiene URL en Discord mediante los logs de la BD
+      // Buscar si el mensaje citado tiene URL en Discord mediante los mapeos de la BD
       let jumpUrl = null;
       const stanzaId = contextInfo.stanzaId;
       if (stanzaId && contextOptions.channelId) {
         try {
-          const logEntry = await messageLogRepository.getByWaMessageId(stanzaId);
+          const logEntry = await messageMappingRepository.getByWaMessageId(stanzaId);
           if (logEntry?.discord_message_id) {
             const guildId = contextOptions.guildId || CONFIG.discord.guildId || '@me';
             jumpUrl = `https://discord.com/channels/${guildId}/${contextOptions.channelId}/${logEntry.discord_message_id}`;

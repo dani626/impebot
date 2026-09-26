@@ -76,20 +76,81 @@ class DatabaseService {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
+      // Migración / Creación de message_mappings
+      // 1. Si existe la tabla anterior 'message_logs', renombrarla a 'message_mappings'
+      try {
+        const tableCheck = await dbConn.query(`
+          SELECT TABLE_NAME 
+          FROM information_schema.TABLES 
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'message_logs'
+        `, [CONFIG.db.database]);
+
+        if (tableCheck.length > 0) {
+          const newTableCheck = await dbConn.query(`
+            SELECT TABLE_NAME 
+            FROM information_schema.TABLES 
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'message_mappings'
+          `, [CONFIG.db.database]);
+
+          if (newTableCheck.length === 0) {
+            console.log('🔄 [DatabaseService] Migrando tabla message_logs -> message_mappings...');
+            await dbConn.query(`RENAME TABLE \`message_logs\` TO \`message_mappings\`;`);
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ [DatabaseService] Advertencia al verificar migración de tabla message_logs:', e.message);
+      }
+
       await dbConn.query(`
-        CREATE TABLE IF NOT EXISTS \`message_logs\` (
+        CREATE TABLE IF NOT EXISTS \`message_mappings\` (
           \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
           \`wa_message_id\` VARCHAR(128) DEFAULT NULL,
           \`discord_message_id\` VARCHAR(64) DEFAULT NULL,
           \`channel_mapping_id\` INT DEFAULT NULL,
-          \`direction\` ENUM('wa_to_discord', 'discord_to_wa') NOT NULL,
+          \`origin_platform\` VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
+          \`sender_name\` VARCHAR(128) DEFAULT NULL,
+          \`content\` TEXT DEFAULT NULL,
           \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           INDEX \`idx_wa_message_id\` (\`wa_message_id\`),
           INDEX \`idx_discord_message_id\` (\`discord_message_id\`),
+          INDEX \`idx_origin_platform\` (\`origin_platform\`),
           INDEX \`idx_created_at\` (\`created_at\`),
-          CONSTRAINT \`fk_mapping_log\` FOREIGN KEY (\`channel_mapping_id\`) REFERENCES \`channel_mappings\` (\`id\`) ON DELETE SET NULL
+          CONSTRAINT \`fk_channel_mapping_message\` FOREIGN KEY (\`channel_mapping_id\`) REFERENCES \`channel_mappings\` (\`id\`) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
+
+      // Asegurar que las nuevas columnas existan si la tabla venía del rename
+      try {
+        const cols = await dbConn.query(`
+          SELECT COLUMN_NAME 
+          FROM information_schema.COLUMNS 
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'message_mappings'
+        `, [CONFIG.db.database]);
+        const colNames = cols.map((c) => c.COLUMN_NAME.toLowerCase());
+
+        if (colNames.includes('direction') && !colNames.includes('origin_platform')) {
+          await dbConn.query(`
+            ALTER TABLE \`message_mappings\` 
+            ADD COLUMN \`origin_platform\` VARCHAR(32) NOT NULL DEFAULT 'whatsapp' AFTER \`channel_mapping_id\`;
+          `);
+          await dbConn.query(`
+            UPDATE \`message_mappings\` 
+            SET \`origin_platform\` = CASE 
+              WHEN \`direction\` = 'discord_to_wa' THEN 'discord' 
+              ELSE 'whatsapp' 
+            END;
+          `);
+        }
+
+        if (!colNames.includes('sender_name')) {
+          await dbConn.query(`ALTER TABLE \`message_mappings\` ADD COLUMN \`sender_name\` VARCHAR(128) DEFAULT NULL AFTER \`origin_platform\`;`);
+        }
+        if (!colNames.includes('content')) {
+          await dbConn.query(`ALTER TABLE \`message_mappings\` ADD COLUMN \`content\` TEXT DEFAULT NULL AFTER \`sender_name\`;`);
+        }
+      } catch (alterErr) {
+        console.warn('⚠️ [DatabaseService] Advertencia al ajustar columnas de message_mappings:', alterErr.message);
+      }
 
       await dbConn.query(`
         CREATE TABLE IF NOT EXISTS \`bot_settings\` (

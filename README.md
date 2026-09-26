@@ -10,10 +10,10 @@ Ofrece retransmisión bidireccional de mensajes (**WhatsApp ↔ Discord**) con p
 ### 🔄 Retransmisión WhatsApp ↔ Discord (Relay)
 - **Bidireccional**: Retransmite mensajes de WhatsApp a canales de Discord y viceversa.
 - **Identidad Vía Webhooks**: En Discord, los mensajes de WhatsApp se publican con el nombre y avatar del remitente.
-- **Prevención Anti-Bucle**: Registro en base de datos (`message_logs`) de cada mensaje reenviado para evitar rebotes infinitos.
+- **Prevención Anti-Bucle y Mapeo Centralizado**: Registro en base de datos (`message_mappings`) de cada mensaje reenviado entre plataformas para evitar rebotes, conservar punteros de saltos de cita (jump URLs) y rastreo de eliminaciones.
 - **Soporte Multimedia**: Transforma textos, citas (quoted replies), imágenes, notas de voz, videos, stickers y documentos.
 - **Mapeo Flexible**: Mapeo canal a canal (`channel_mappings`) y usuario a usuario (`user_mappings`).
-- **Limpieza Automática**: Purgado programado de logs antiguos para optimizar almacenamiento.
+- **Persistencia de Punteros**: Conserva los identificadores y autoría histórica entre plataformas para resolver referencias en cualquier momento.
 - **Recuperación Offline (Backlog)**: Captura mensajes atrasados enviados mientras el bot estuvo apagado (hasta 24h) y los retransmite a Discord con un **Embed que muestra la fecha y hora original**.
 
 ### 🖼️ Bot de Stickers (WhatsApp)

@@ -5,7 +5,7 @@ import { discordService } from '../services/DiscordService.js';
 import { catboxService } from '../services/CatboxService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { userMappingRepository } from '../database/repositories/UserMappingRepository.js';
-import { messageLogRepository } from '../database/repositories/MessageLogRepository.js';
+import { messageMappingRepository } from '../database/repositories/MessageMappingRepository.js';
 import { MessageTransformer } from './MessageTransformer.js';
 import { isBotCommand } from '../utils/commands.js';
 
@@ -182,7 +182,7 @@ export class RelayEngine {
     if (!mapping) return;
 
     // 4. Prevención de bucles: verificar si el mensaje ya fue registrado
-    const alreadyProcessed = await messageLogRepository.exists(messageId, null);
+    const alreadyProcessed = await messageMappingRepository.exists(messageId, null);
     if (alreadyProcessed) {
       return;
     }
@@ -274,13 +274,15 @@ export class RelayEngine {
 
     if (!discordMessageId) return;
 
-    // 9. Registrar IDs para prevenir bucles de retorno
-    await messageLogRepository.logMessage(
-      messageId,
+    // 9. Registrar mensaje en message_mappings para prevenir bucles, permitir citas y borrados
+    await messageMappingRepository.save({
+      waMessageId: messageId,
       discordMessageId,
-      mapping.id,
-      'wa_to_discord'
-    );
+      channelMappingId: mapping.id,
+      originPlatform: 'whatsapp',
+      senderName: username,
+      content: text || (files.length > 0 ? '[Multimedia]' : null),
+    });
 
     // 10. Si el video continúa subiéndose en background, actualizar el mensaje de Discord al terminar
     if (timedOut && catboxUploadPromise) {
@@ -325,8 +327,8 @@ export class RelayEngine {
     const mapping = await channelMappingRepository.getByDiscordChannelId(channelId);
     if (!mapping) return;
 
-    // 2. Prevención de bucles: verificar si el mensaje de Discord ya está en logs
-    const alreadyProcessed = await messageLogRepository.exists(null, discordMsg.id);
+    // 2. Prevención de bucles: verificar si el mensaje de Discord ya está registrado
+    const alreadyProcessed = await messageMappingRepository.exists(null, discordMsg.id);
     if (alreadyProcessed) {
       return;
     }
@@ -335,19 +337,24 @@ export class RelayEngine {
     const payloads = await MessageTransformer.toWhatsApp(discordMsg);
     if (!payloads || payloads.length === 0) return;
 
+    const authorName = discordMsg.member?.displayName || discordMsg.author.username;
+    const cleanText = discordMsg.cleanContent || (discordMsg.attachments.size > 0 ? '[Multimedia]' : null);
+
     // 4. Reenviar cada payload a WhatsApp
     for (const payload of payloads) {
       try {
         const sent = await whatsAppService.sendMessage(mapping.whatsapp_jid, payload.content, payload.options);
         const waMessageId = sent?.key?.id || null;
 
-        // 5. Registrar en logs para evitar bucles de retorno
-        await messageLogRepository.logMessage(
+        // 5. Registrar en message_mappings para evitar bucles de retorno y mantener punteros
+        await messageMappingRepository.save({
           waMessageId,
-          discordMsg.id,
-          mapping.id,
-          'discord_to_wa'
-        );
+          discordMessageId: discordMsg.id,
+          channelMappingId: mapping.id,
+          originPlatform: 'discord',
+          senderName: authorName,
+          content: cleanText,
+        });
       } catch (waErr) {
         console.error(`[RelayEngine] Error al enviar mensaje a WhatsApp (${mapping.whatsapp_jid}):`, waErr.message);
       }
@@ -364,7 +371,7 @@ export class RelayEngine {
     if (!waMessageId) return;
 
     // 1. Buscar si tenemos registrado el mensaje en la base de datos
-    const logEntry = await messageLogRepository.getByWaMessageId(waMessageId);
+    const logEntry = await messageMappingRepository.getByWaMessageId(waMessageId);
     if (!logEntry || !logEntry.discord_message_id) {
       return;
     }
