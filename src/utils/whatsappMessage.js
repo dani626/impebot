@@ -101,3 +101,36 @@ export const PRESENCE_TEXTS = {
   },
 };
 
+/**
+ * Detecta si un mensaje recibido corresponde a una revocación / eliminación ("eliminar para todos").
+ * Extrae la clave del mensaje que fue revocado si aplica.
+ * @param {object} msg Mensaje WAMessage de Baileys
+ * @returns {{ isRevoke: boolean, revokedKey?: { id: string, remoteJid?: string, fromMe?: boolean, participant?: string } }}
+ */
+export function extractRevokedMessageKey(msg) {
+  if (!msg) return { isRevoke: false };
+
+  const message = msg.message;
+  const protocolMsg =
+    message?.protocolMessage ||
+    message?.ephemeralMessage?.message?.protocolMessage ||
+    message?.viewOnceMessage?.message?.protocolMessage ||
+    message?.viewOnceMessageV2?.message?.protocolMessage;
+
+  // ProtocolMessage.Type.REVOKE es 0
+  if (protocolMsg && protocolMsg.type === 0 && protocolMsg.key?.id) {
+    return {
+      isRevoke: true,
+      revokedKey: {
+        id: protocolMsg.key.id,
+        remoteJid: protocolMsg.key.remoteJid || msg.key?.remoteJid,
+        fromMe: Boolean(protocolMsg.key.fromMe),
+        participant: protocolMsg.key.participant || msg.key?.participant,
+      },
+    };
+  }
+
+  return { isRevoke: false };
+}
+
+

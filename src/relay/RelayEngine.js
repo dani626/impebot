@@ -135,6 +135,15 @@ export class RelayEngine {
       }
     });
 
+    // Escuchar mensajes eliminados en WhatsApp ("eliminar para todos")
+    whatsAppService.on('message.delete', async (deleteData) => {
+      try {
+        await this.handleWhatsAppDelete(deleteData);
+      } catch (err) {
+        console.error('[RelayEngine] Error procesando eliminación de WhatsApp -> Discord:', err);
+      }
+    });
+
     // Escuchar mensajes de Discord
     discordService.on('message', async (discordMsg) => {
       try {
@@ -344,6 +353,72 @@ export class RelayEngine {
         );
       } catch (waErr) {
         console.error(`[RelayEngine] Error al enviar mensaje a WhatsApp (${mapping.whatsapp_jid}):`, waErr.message);
+      }
+    }
+  }
+
+  /**
+   * Procesa la eliminación de un mensaje de WhatsApp ("eliminar para todos")
+   * e informa / actualiza el mensaje correspondiente en Discord.
+   * @param {object} deleteData 
+   */
+  async handleWhatsAppDelete(deleteData) {
+    const { waMessageId, remoteJid } = deleteData;
+    if (!waMessageId) return;
+
+    // 1. Buscar si tenemos registrado el mensaje en la base de datos
+    const logEntry = await messageLogRepository.getByWaMessageId(waMessageId);
+    if (!logEntry || !logEntry.discord_message_id) {
+      return;
+    }
+
+    const discordMessageId = logEntry.discord_message_id;
+
+    // 2. Obtener el mapeo correspondiente
+    let mapping = null;
+    if (logEntry.channel_mapping_id) {
+      mapping = await channelMappingRepository.getById(logEntry.channel_mapping_id);
+    }
+    if (!mapping && remoteJid) {
+      mapping = await channelMappingRepository.getByWhatsAppJid(remoteJid);
+    }
+
+    if (!mapping) return;
+
+    console.log(`🗑️ [RelayEngine] Notificando eliminación en Discord para mensaje WA ${waMessageId} (DC ${discordMessageId})...`);
+
+    const deletedEmbed = new EmbedBuilder()
+      .setColor(0x95a5a6)
+      .setDescription('🗑️ *Este mensaje fue eliminado en WhatsApp.*')
+      .setFooter({ text: 'WhatsApp Relay • Mensaje eliminado' })
+      .setTimestamp(new Date());
+
+    try {
+      if (mapping.webhook_url) {
+        await discordService.editWebhookMessage(mapping.webhook_url, discordMessageId, {
+          content: '🗑️ *[Mensaje eliminado en WhatsApp]*',
+          embeds: [deletedEmbed],
+          files: [],
+        });
+      } else if (mapping.discord_channel_id) {
+        await discordService.editChannelMessage(mapping.discord_channel_id, discordMessageId, {
+          content: '🗑️ *[Mensaje eliminado en WhatsApp]*',
+          embeds: [deletedEmbed],
+          files: [],
+        });
+      }
+      console.log(`✅ [RelayEngine] Mensaje ${discordMessageId} actualizado a eliminado en Discord.`);
+    } catch (err) {
+      console.warn(`⚠️ [RelayEngine] No se pudo editar el mensaje ${discordMessageId} en Discord: ${err.message}. Intentando enviar aviso al canal...`);
+      // Fallback: si no se pudo editar (ej: mensaje muy antiguo o borrado), enviar aviso en el canal
+      try {
+        if (mapping.discord_channel_id) {
+          await discordService.sendMessage(mapping.discord_channel_id, {
+            embeds: [deletedEmbed],
+          });
+        }
+      } catch (sendErr) {
+        console.error('[RelayEngine] Error enviando aviso de eliminación a Discord:', sendErr.message);
       }
     }
   }

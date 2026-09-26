@@ -159,6 +159,40 @@ export class DiscordService extends EventEmitter {
   }
 
   /**
+   * Elimina un mensaje previamente enviado a través de un Webhook.
+   * @param {string} webhookUrl 
+   * @param {string} messageId 
+   * @returns {Promise<void>}
+   */
+  async deleteWebhookMessage(webhookUrl, messageId) {
+    if (!webhookUrl || !messageId) {
+      throw new Error('[DiscordService] webhookUrl y messageId son requeridos para eliminar.');
+    }
+    const webhookClient = this.getWebhookClient(webhookUrl);
+    return await webhookClient.deleteMessage(messageId);
+  }
+
+  /**
+   * Elimina un mensaje previamente enviado en un canal de Discord.
+   * @param {string} channelId 
+   * @param {string} messageId 
+   * @returns {Promise<void>}
+   */
+  async deleteChannelMessage(channelId, messageId) {
+    if (!this.client || !this.isReady) {
+      throw new Error('[DiscordService] Cliente de Discord no inicializado o no conectado.');
+    }
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`[DiscordService] Canal ${channelId} no es válido o no es de texto.`);
+    }
+    const message = await channel.messages.fetch(messageId);
+    if (message) {
+      await message.delete();
+    }
+  }
+
+  /**
    * Busca o crea una categoría en el servidor principal.
    * @param {string} categoryName 
    * @returns {Promise<import('discord.js').CategoryChannel|null>}

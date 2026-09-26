@@ -15,6 +15,20 @@ export class ChannelMappingRepository {
   }
 
   /**
+   * Obtiene un mapeo de canal por su ID interno en la base de datos.
+   * @param {number} id 
+   * @returns {Promise<{id: number, whatsapp_jid: string, discord_channel_id: string, webhook_url: string|null, webhook_id: string|null}|null>}
+   */
+  async getById(id) {
+    if (!id) return null;
+    const rows = await dbService.query(
+      'SELECT id, whatsapp_jid, discord_channel_id, webhook_url, webhook_id FROM channel_mappings WHERE id = ? LIMIT 1',
+      [id]
+    );
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /**
    * Obtiene un mapeo de canal por Discord Channel ID.
    * @param {string} discordChannelId 
    * @returns {Promise<{id: number, whatsapp_jid: string, discord_channel_id: string, webhook_url: string|null, webhook_id: string|null}|null>}

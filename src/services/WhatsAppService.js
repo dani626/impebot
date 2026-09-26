@@ -8,7 +8,12 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import { CONFIG } from '../config.js';
 import { settingsRepository } from '../database/repositories/SettingsRepository.js';
-import { extractWaText, parseWaTimestamp, normalizePresence } from '../utils/whatsappMessage.js';
+import {
+  extractWaText,
+  parseWaTimestamp,
+  normalizePresence,
+  extractRevokedMessageKey,
+} from '../utils/whatsappMessage.js';
 
 export class WhatsAppService extends EventEmitter {
   constructor() {
@@ -153,6 +158,48 @@ export class WhatsAppService extends EventEmitter {
       }
     });
 
+    // Evento nativo de eliminación de mensajes en Baileys (messages.delete)
+    this.sock.ev.on('messages.delete', async (item) => {
+      try {
+        if (Array.isArray(item?.keys)) {
+          for (const key of item.keys) {
+            if (key?.id) {
+              this.emit('message.delete', {
+                waMessageId: key.id,
+                remoteJid: key.remoteJid,
+                fromMe: key.fromMe,
+                participant: key.participant,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[WhatsAppService] Error procesando messages.delete:', err);
+      }
+    });
+
+    // Evento de actualización de mensajes (messages.update)
+    this.sock.ev.on('messages.update', async (updates) => {
+      try {
+        if (!Array.isArray(updates)) return;
+        for (const update of updates) {
+          if (update.update?.message) {
+            const { isRevoke, revokedKey } = extractRevokedMessageKey(update.update);
+            if (isRevoke && revokedKey?.id) {
+              this.emit('message.delete', {
+                waMessageId: revokedKey.id,
+                remoteJid: revokedKey.remoteJid,
+                fromMe: revokedKey.fromMe,
+                participant: revokedKey.participant,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[WhatsAppService] Error procesando messages.update:', err);
+      }
+    });
+
     return this.sock;
   }
 
@@ -241,6 +288,20 @@ export class WhatsAppService extends EventEmitter {
    */
   async processIncomingMessage(msg, isHistoricalSync = false) {
     if (!msg || !msg.message) return;
+
+    // Verificar si es un mensaje de revocación ("eliminar para todos")
+    const { isRevoke, revokedKey } = extractRevokedMessageKey(msg);
+    if (isRevoke && revokedKey?.id) {
+      console.log(`🗑️ [WhatsApp] Mensaje revocado detectado: ID ${revokedKey.id} en ${revokedKey.remoteJid}`);
+      this.emit('message.delete', {
+        waMessageId: revokedKey.id,
+        remoteJid: revokedKey.remoteJid,
+        fromMe: revokedKey.fromMe,
+        participant: revokedKey.participant,
+        rawMessage: msg,
+      });
+      return;
+    }
 
     // Calcular antigüedad del mensaje
     const timestampSec = parseWaTimestamp(msg);
