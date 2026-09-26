@@ -46,6 +46,24 @@ export class MessageLogRepository {
   }
 
   /**
+   * Obtiene el registro de log que contiene un ID de mensaje de Discord.
+   * @param {string} discordMessageId 
+   * @returns {Promise<{ id: number, wa_message_id: string, discord_message_id: string, channel_mapping_id: number, direction: string }|null>}
+   */
+  async getByDiscordMessageId(discordMessageId) {
+    if (!discordMessageId) return null;
+    const sql = `
+      SELECT id, wa_message_id, discord_message_id, channel_mapping_id, direction 
+      FROM message_logs 
+      WHERE discord_message_id = ? 
+      ORDER BY id DESC 
+      LIMIT 1
+    `;
+    const rows = await dbService.query(sql, [discordMessageId]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /**
    * Registra un mensaje retransmitido para prevenir bucles futuros.
    * @param {string|null} waMessageId 
    * @param {string|null} discordMessageId 

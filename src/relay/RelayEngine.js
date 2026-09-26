@@ -153,9 +153,6 @@ export class RelayEngine {
       }
     });
 
-    // Programar limpieza periódica de logs antiguos para optimizar la base de datos
-    this.scheduleCleanup();
-
     console.log('🚀 [RelayEngine] Motor de retransmisión activo y listo.');
   }
 
@@ -496,33 +493,9 @@ export class RelayEngine {
   }
 
   /**
-   * Tarea periódica de limpieza de logs antiguos.
-   */
-  scheduleCleanup() {
-    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
-
-    const interval = CONFIG.relay.cleanupIntervalMs || 3600000;
-    this.cleanupTimer = setInterval(async () => {
-      try {
-        const retention = CONFIG.relay.messageRetentionHours || 24;
-        const deleted = await messageLogRepository.cleanup(retention);
-        if (deleted > 0) {
-          console.log(`🧹 [RelayEngine] Limpieza de logs completada: ${deleted} registros eliminados.`);
-        }
-      } catch (err) {
-        console.error('[RelayEngine] Error durante la limpieza de logs:', err.message);
-      }
-    }, interval);
-  }
-
-  /**
    * Detiene el motor de retransmisión.
    */
   stop() {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
     this.isRunning = false;
     console.log('🛑 [RelayEngine] Motor de retransmisión detenido.');
   }
