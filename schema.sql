@@ -1,4 +1,5 @@
--- Base de datos para Relay Bot (WhatsApp <-> Discord)
+-- Espejo del DDL que crea el bot al arrancar (DatabaseService.ensureDatabaseAndTables).
+-- Importar este archivo es opcional.
 CREATE DATABASE IF NOT EXISTS `relay_bot` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `relay_bot`;
 
@@ -40,4 +41,13 @@ CREATE TABLE IF NOT EXISTS `message_logs` (
   INDEX `idx_discord_message_id` (`discord_message_id`),
   INDEX `idx_created_at` (`created_at`),
   CONSTRAINT `fk_mapping_log` FOREIGN KEY (`channel_mapping_id`) REFERENCES `channel_mappings` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 4. Ajustes persistentes del bot (presencia de WhatsApp, etc.)
+-- Espejo del DDL que aplica DatabaseService.ensureDatabaseAndTables() al arrancar.
+CREATE TABLE IF NOT EXISTS `bot_settings` (
+  `setting_key` VARCHAR(64) NOT NULL PRIMARY KEY,
+  `setting_value` TEXT NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -104,4 +104,3 @@ export class SettingsRepository {
 }
 
 export const settingsRepository = new SettingsRepository();
-export default settingsRepository;

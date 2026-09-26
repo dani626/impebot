@@ -3,7 +3,6 @@ import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -173,15 +172,6 @@ export class WhatsAppService extends EventEmitter {
   }
 
   /**
-   * Descarga el medio multimedia de un mensaje de WhatsApp.
-   * @param {object} message 
-   * @returns {Promise<Buffer>}
-   */
-  async downloadMedia(message) {
-    return await downloadMediaMessage(message, 'buffer', {});
-  }
-
-  /**
    * Intenta obtener la URL del avatar de un usuario o grupo.
    * @param {string} jid 
    * @returns {Promise<string|null>}
@@ -330,4 +320,3 @@ export class WhatsAppService extends EventEmitter {
 }
 
 export const whatsAppService = new WhatsAppService();
-export default whatsAppService;

@@ -47,4 +47,3 @@ export class CatboxService {
 }
 
 export const catboxService = new CatboxService();
-export default catboxService;

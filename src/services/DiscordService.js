@@ -261,4 +261,3 @@ export class DiscordService extends EventEmitter {
 }
 
 export const discordService = new DiscordService();
-export default discordService;

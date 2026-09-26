@@ -49,7 +49,7 @@ cd impebot
 npm install
 ```
 
-3. Importa la estructura de base de datos en MariaDB:
+3. Asegúrate de que MariaDB esté en marcha. **El bot crea la base y las tablas al arrancar** (`DatabaseService`). Importar [`schema.sql`](schema.sql) a mano es opcional (documentación / instalación sin Node):
 ```bash
 mysql -u root -p < schema.sql
 ```
@@ -74,6 +74,8 @@ PAIRING_NUMBER=
 # Relay
 RELAY_MESSAGE_RETENTION_HOURS=24
 RELAY_CLEANUP_INTERVAL_MS=3600000
+# Opt-in: reenviar también mensajes enviados desde el celular / otra sesión
+RELAY_OWN_MESSAGES=false
 ```
 
 ---
@@ -116,7 +118,7 @@ npm run dev
 
 ```text
 c:/proyectos/impebot/
-├── schema.sql                              # Estructura DDL de tablas e índices
+├── schema.sql                              # Espejo DDL (opcional; el bot crea las tablas)
 ├── .env.example                            # Plantilla de variables de entorno
 ├── .env                                    # Variables de entorno locales (gitignored)
 ├── package.json                            # Dependencias y scripts

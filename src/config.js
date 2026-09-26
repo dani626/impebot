@@ -47,6 +47,8 @@ export const CONFIG = {
     maxMissedMessageAgeHours: parseInt(process.env.RELAY_MAX_MISSED_HOURS, 10) || 24,
     // Modo del embed con fecha/hora original: 'missed' (solo mensajes recuperados), 'all' o 'none'
     embedTimestampMode: (process.env.RELAY_EMBED_TIMESTAMP || 'missed').toLowerCase(),
+    // Reenviar mensajes propios (celular u otra sesión). Opt-in: RELAY_OWN_MESSAGES=true
+    relayOwnMessages: process.env.RELAY_OWN_MESSAGES === 'true',
   },
 
   // Configuración de Catbox para subida y reproducción de videos

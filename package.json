@@ -1,7 +1,7 @@
 {
   "name": "impebot-sticker-bot",
   "version": "1.0.0",
-  "description": "Bot de WhatsApp en Node.js usando Baileys para convertir imágenes en stickers (Compatible con Pterodactyl)",
+  "description": "Relay bidireccional WhatsApp ↔ Discord y bot de stickers (Baileys, discord.js, MariaDB; compatible con Pterodactyl)",
   "main": "index.js",
   "type": "module",
   "scripts": {

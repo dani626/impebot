@@ -59,8 +59,8 @@ export class RelayEngine {
   async handleWhatsAppMessage(waData) {
     const { jid, messageId, sender, pushName, text, isFromMe } = waData;
 
-    // 1. Ignorar mensajes propios del bot si se desea evitar autoretransmisión
-    if (isFromMe) return;
+    // 1. Ignorar mensajes propios salvo RELAY_OWN_MESSAGES=true
+    if (isFromMe && !CONFIG.relay.relayOwnMessages) return;
 
     // 2. Si el mensaje es un comando del bot de stickers (!s, !help, etc.), no retransmitirlo a Discord
     if (text && CONFIG.prefixes.some((p) => text.startsWith(p))) {
@@ -426,4 +426,3 @@ export class RelayEngine {
 }
 
 export const relayEngine = new RelayEngine();
-export default relayEngine;

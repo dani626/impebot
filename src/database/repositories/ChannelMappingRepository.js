@@ -56,15 +56,6 @@ export class ChannelMappingRepository {
     `;
     return await dbService.query(sql, [whatsappJid, discordChannelId, webhookUrl, webhookId]);
   }
-
-  /**
-   * Elimina un mapeo por su ID.
-   * @param {number} id 
-   */
-  async delete(id) {
-    return await dbService.query('DELETE FROM channel_mappings WHERE id = ?', [id]);
-  }
 }
 
 export const channelMappingRepository = new ChannelMappingRepository();
-export default channelMappingRepository;

@@ -3,6 +3,7 @@ import { CONFIG } from '../config.js';
 import { whatsAppService } from './WhatsAppService.js';
 import { discordService } from './DiscordService.js';
 import { dbService } from '../database/DatabaseService.js';
+import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { relayEngine } from '../relay/RelayEngine.js';
 
 export class ConsoleService {
@@ -184,9 +185,7 @@ export class ConsoleService {
     }
 
     try {
-      const rows = await dbService.query(
-        'SELECT id, whatsapp_jid, discord_channel_id, created_at FROM channel_mappings ORDER BY id ASC'
-      );
+      const rows = await channelMappingRepository.getAll();
 
       console.log('\n==================================================');
       console.log(`🔗 CANALES MAPEADOS (${rows.length} en total):`);
@@ -353,4 +352,3 @@ export class ConsoleService {
 }
 
 export const consoleService = new ConsoleService();
-export default consoleService;

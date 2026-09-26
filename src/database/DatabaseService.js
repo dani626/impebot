@@ -196,4 +196,3 @@ class DatabaseService {
 
 // Exportamos una instancia única (Singleton)
 export const dbService = new DatabaseService();
-export default dbService;

@@ -76,4 +76,3 @@ export class MessageLogRepository {
 }
 
 export const messageLogRepository = new MessageLogRepository();
-export default messageLogRepository;
