@@ -49,6 +49,8 @@ export const CONFIG = {
     embedTimestampMode: (process.env.RELAY_EMBED_TIMESTAMP || 'missed').toLowerCase(),
     // Reenviar mensajes propios (celular u otra sesión). Opt-in: RELAY_OWN_MESSAGES=true
     relayOwnMessages: process.env.RELAY_OWN_MESSAGES === 'true',
+    // Notificaciones de entrada y salida de miembros en grupos de WhatsApp hacia Discord (embed)
+    groupEvents: process.env.RELAY_GROUP_EVENTS !== 'false',
   },
 
   // Configuración de Catbox para subida y reproducción de videos

@@ -133,4 +133,96 @@ export function extractRevokedMessageKey(msg) {
   return { isRevoke: false };
 }
 
+/**
+ * Da formato legible de número telefónico internacional a partir de un JID de WhatsApp.
+ * Soporta números de Chile, Ecuador, Argentina, México, Colombia, Perú, España, USA, etc.
+ * @param {string} jid JID de WhatsApp (ej. 56976751133@s.whatsapp.net)
+ * @returns {string} Número con formato internacional (ej. +56 9 7675 1133)
+ */
+export function formatPhoneNumber(jid) {
+  if (!jid || typeof jid !== 'string') return '';
+  const rawNumber = jid.split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+  if (!rawNumber) return jid;
+
+  // Chile +56 9 xxxx xxxx (11 dígitos)
+  if (rawNumber.startsWith('56') && rawNumber.length === 11) {
+    return `+56 ${rawNumber[2]} ${rawNumber.slice(3, 7)} ${rawNumber.slice(7)}`;
+  }
+  // Ecuador +593 99 xxx xxxx (12 dígitos)
+  if (rawNumber.startsWith('593') && rawNumber.length === 12) {
+    return `+593 ${rawNumber.slice(3, 5)} ${rawNumber.slice(5, 8)} ${rawNumber.slice(8)}`;
+  }
+  // Argentina +54 9 xx xxxx xxxx (13 dígitos) o similar
+  if (rawNumber.startsWith('549') && rawNumber.length >= 12) {
+    return `+54 9 ${rawNumber.slice(3, 5)} ${rawNumber.slice(5, 9)} ${rawNumber.slice(9)}`;
+  }
+  // México +52 1 xx xxxx xxxx (12 dígitos)
+  if (rawNumber.startsWith('52') && rawNumber.length === 12 && rawNumber[2] === '1') {
+    return `+52 1 ${rawNumber.slice(3, 5)} ${rawNumber.slice(5, 9)} ${rawNumber.slice(9)}`;
+  }
+  // Colombia +57 3xx xxx xxxx (12 dígitos)
+  if (rawNumber.startsWith('57') && rawNumber.length === 12) {
+    return `+57 ${rawNumber.slice(2, 5)} ${rawNumber.slice(5, 8)} ${rawNumber.slice(8)}`;
+  }
+  // Perú +51 9xx xxx xxx (11 dígitos)
+  if (rawNumber.startsWith('51') && rawNumber.length === 11) {
+    return `+51 ${rawNumber.slice(2, 5)} ${rawNumber.slice(5, 8)} ${rawNumber.slice(8)}`;
+  }
+  // España +34 xxx xx xx xx (11 dígitos)
+  if (rawNumber.startsWith('34') && rawNumber.length === 11) {
+    return `+34 ${rawNumber.slice(2, 5)} ${rawNumber.slice(5, 7)} ${rawNumber.slice(7, 9)} ${rawNumber.slice(9)}`;
+  }
+  // USA / Canadá +1 (xxx) xxx-xxxx (11 dígitos)
+  if (rawNumber.startsWith('1') && rawNumber.length === 11) {
+    return `+1 (${rawNumber.slice(1, 4)}) ${rawNumber.slice(4, 7)}-${rawNumber.slice(7)}`;
+  }
+
+  return `+${rawNumber}`;
+}
+
+/**
+ * Genera el texto descriptivo en español de la acción de entrada o salida de un miembro del grupo.
+ * Replica el comportamiento y textos nativos de WhatsApp.
+ * @param {object} params
+ * @param {'add'|'remove'} params.action Acción principal recibida
+ * @param {number|null} [params.stubType] Código numérico WAMessageStubType si está disponible
+ * @param {string|null} [params.author] JID de quien ejecutó la acción si aplica
+ * @param {string} params.participant JID del miembro afectado
+ * @param {string|null} [params.authorName] Nombre resuelto de quien ejecutó la acción
+ * @returns {string} Texto explicativo (ej. "se unió a través de un enlace de invitación.")
+ */
+export function resolveParticipantActionText({ action, stubType, author, participant, authorName }) {
+  const isSelf = !author || author === participant;
+
+  if (action === 'add') {
+    // 31: GROUP_PARTICIPANT_INVITE
+    if (stubType === 31 || (isSelf && !authorName)) {
+      return 'se unió a través de un enlace de invitación.';
+    }
+    // 71: GROUP_PARTICIPANT_ADD_REQUEST_JOIN
+    if (stubType === 71) {
+      return 'se unió tras la aprobación de su solicitud de ingreso.';
+    }
+    // Si fue añadido por un administrador o tercero
+    if (!isSelf && authorName) {
+      return `fue añadido(a) al grupo por **${authorName}**.`;
+    }
+    return 'se unió al grupo.';
+  }
+
+  if (action === 'remove') {
+    // 32: GROUP_PARTICIPANT_LEAVE (voluntario)
+    if (stubType === 32 || isSelf) {
+      return 'salió del grupo.';
+    }
+    // 28: GROUP_PARTICIPANT_REMOVE (eliminado por admin)
+    if (stubType === 28 || (!isSelf && authorName)) {
+      return `fue eliminado(a) del grupo por **${authorName}**.`;
+    }
+    return 'salió del grupo.';
+  }
+
+  return action === 'add' ? 'se unió al grupo.' : 'salió del grupo.';
+}
+
 

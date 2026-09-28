@@ -8,6 +8,7 @@ import { userMappingRepository } from '../database/repositories/UserMappingRepos
 import { messageMappingRepository } from '../database/repositories/MessageMappingRepository.js';
 import { MessageTransformer } from './MessageTransformer.js';
 import { isBotCommand } from '../utils/commands.js';
+import { formatPhoneNumber, resolveParticipantActionText } from '../utils/whatsappMessage.js';
 
 /**
  * Genera embeds formateados para estados de subida a Catbox.
@@ -85,6 +86,43 @@ async function deliverToDiscord(mapping, { content, username, avatarURL, files, 
 }
 
 /**
+ * Entrega un embed de sistema a Discord vía Webhook o canal directo.
+ * @param {object} mapping 
+ * @param {EmbedBuilder} embed 
+ * @param {{ name?: string, avatarUrl?: string }} [options={}] 
+ * @returns {Promise<string|null>}
+ */
+async function deliverSystemEmbed(mapping, embed, { name, avatarUrl } = {}) {
+  const username = (name || CONFIG.botName || 'WhatsApp Relay').slice(0, 80);
+
+  if (mapping.webhook_url) {
+    try {
+      const result = await discordService.sendViaWebhook(mapping.webhook_url, {
+        username,
+        avatarURL: avatarUrl || undefined,
+        embeds: [embed],
+      });
+      if (result?.id) return result.id;
+    } catch (webhookErr) {
+      console.warn(`[RelayEngine] Fallo al enviar embed vía Webhook, usando canal directo: ${webhookErr.message}`);
+    }
+  }
+
+  if (mapping.discord_channel_id) {
+    try {
+      const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
+        embeds: [embed],
+      });
+      return sentMsg?.id || null;
+    } catch (chanErr) {
+      console.error(`[RelayEngine] Error al enviar embed al canal directo ${mapping.discord_channel_id}:`, chanErr.message);
+    }
+  }
+
+  return null;
+}
+
+/**
  * Edita un mensaje en Discord ya sea por Webhook o por canal directo.
  * @param {object} mapping 
  * @param {string} messageId 
@@ -110,6 +148,8 @@ export class RelayEngine {
   constructor() {
     this.cleanupTimer = null;
     this.isRunning = false;
+    /** @type {Set<string>} Caché de deduplicación para eventos recientes de grupos */
+    this.recentGroupEvents = new Set();
   }
 
   /**
@@ -141,6 +181,15 @@ export class RelayEngine {
         await this.handleWhatsAppDelete(deleteData);
       } catch (err) {
         console.error('[RelayEngine] Error procesando eliminación de WhatsApp -> Discord:', err);
+      }
+    });
+
+    // Escuchar eventos de entrada y salida de participantes en grupos de WhatsApp
+    whatsAppService.on('groupParticipantsUpdate', async (eventData) => {
+      try {
+        await this.handleGroupParticipantsUpdate(eventData);
+      } catch (err) {
+        console.error('[RelayEngine] Error procesando evento de entrada/salida de grupo:', err);
       }
     });
 
@@ -497,6 +546,131 @@ export class RelayEngine {
       console.error(`❌ [RelayEngine] Error durante la auto-creación del mapeo para ${jid}:`, err);
       return null;
     }
+  }
+
+  /**
+   * Resuelve el nombre visible de un usuario para menciones o autor de acciones.
+   * @param {string} jid 
+   * @returns {Promise<string>}
+   */
+  async resolveUserDisplayName(jid) {
+    if (!jid) return '';
+    const userMap = await userMappingRepository.getByWhatsAppJid(jid);
+    if (userMap?.display_name) return userMap.display_name;
+
+    const contactName = whatsAppService.getContactName(jid);
+    if (contactName) {
+      return contactName.startsWith('~') ? contactName : `~${contactName}`;
+    }
+
+    return formatPhoneNumber(jid);
+  }
+
+  /**
+   * Procesa la entrada o salida de un miembro de un grupo de WhatsApp y envía un embed a Discord.
+   * @param {object} eventData 
+   */
+  async handleGroupParticipantsUpdate(eventData) {
+    if (!CONFIG.relay.groupEvents) return;
+
+    const { groupJid, participant, action, author, stubType, pushName, timestamp } = eventData;
+    if (!groupJid || !participant || (action !== 'add' && action !== 'remove')) return;
+
+    // Prevenir spam al reiniciar el bot si se sincronizan eventos antiguos (más de 2 minutos)
+    const nowSec = Math.floor(Date.now() / 1000);
+    const eventTime = timestamp || nowSec;
+    if (nowSec - eventTime > 120) {
+      return;
+    }
+
+    // Deduplicación en ventana de 10 segundos
+    const dedupWindow = Math.floor(Date.now() / 10000);
+    const dedupKey = `${groupJid}:${participant}:${action}:${dedupWindow}`;
+    if (this.recentGroupEvents.has(dedupKey)) {
+      return;
+    }
+    this.recentGroupEvents.add(dedupKey);
+    setTimeout(() => this.recentGroupEvents.delete(dedupKey), 30000);
+
+    // 1. Obtener o auto-crear mapeo del canal de Discord para este grupo
+    let mapping = await channelMappingRepository.getByWhatsAppJid(groupJid);
+    if (!mapping && CONFIG.discord.guildId) {
+      mapping = await this.autoCreateMapping({
+        jid: groupJid,
+        pushName: null,
+        sender: author || participant,
+      });
+    }
+
+    if (!mapping) return;
+
+    // 2. Obtener metadatos del grupo
+    const groupName = (await whatsAppService.getChatName(groupJid)) || 'Grupo de WhatsApp';
+    const groupAvatarUrl = await whatsAppService.getProfilePictureUrl(groupJid);
+
+    // 3. Resolver identidad del participante
+    const userMap = await userMappingRepository.getByWhatsAppJid(participant);
+    const knownPushName = userMap?.display_name || pushName || whatsAppService.getContactName(participant);
+    const formattedPhone = formatPhoneNumber(participant);
+
+    let userDisplay = '';
+    if (knownPushName) {
+      const cleanName = knownPushName.startsWith('~') ? knownPushName : `~${knownPushName}`;
+      userDisplay = `**${cleanName}** (\`${formattedPhone}\`)`;
+    } else {
+      userDisplay = `**${formattedPhone}**`;
+    }
+
+    // 4. Resolver autor si alguien más ejecutó la acción (ej. administrador)
+    let authorDisplay = null;
+    if (author && author !== participant) {
+      authorDisplay = await this.resolveUserDisplayName(author);
+    }
+
+    // 5. Determinar texto de la acción según stubType o autor
+    const actionText = resolveParticipantActionText({
+      action,
+      stubType,
+      author,
+      participant,
+      authorName: authorDisplay,
+    });
+
+    // 6. Obtener avatar del participante (si está disponible)
+    let participantAvatarUrl = userMap?.avatar_url || null;
+    if (!participantAvatarUrl) {
+      participantAvatarUrl = await whatsAppService.getProfilePictureUrl(participant);
+    }
+
+    // 7. Construir Embed estilizado
+    const isAdd = action === 'add';
+    const embed = new EmbedBuilder()
+      .setColor(isAdd ? 0x25d366 : 0xed4245)
+      .setTitle(isAdd ? '📥 Entrada al grupo' : '📤 Salida del grupo')
+      .setDescription(isAdd ? `👋 ${userDisplay} ${actionText}` : `🚪 ${userDisplay} ${actionText}`)
+      .setAuthor({
+        name: groupName,
+        iconURL: groupAvatarUrl || undefined,
+      })
+      .setFooter({
+        text: `WhatsApp • ${groupName}`,
+        iconURL: groupAvatarUrl || undefined,
+      })
+      .setTimestamp(new Date(eventTime * 1000));
+
+    if (participantAvatarUrl) {
+      embed.setThumbnail(participantAvatarUrl);
+    }
+
+    console.log(
+      `👥 [RelayEngine] Evento de grupo (${action.toUpperCase()}): ${userDisplay.replace(/\*/g, '')} ${actionText} en "${groupName}"`
+    );
+
+    // 8. Entregar a Discord
+    await deliverSystemEmbed(mapping, embed, {
+      name: groupName,
+      avatarUrl: groupAvatarUrl,
+    });
   }
 
   /**
