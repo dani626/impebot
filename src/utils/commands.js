@@ -4,6 +4,7 @@ import { CONFIG } from '../config.js';
  * Lista blanca de comandos soportados por el bot.
  */
 export const BOT_COMMANDS = new Set([
+  'ticket', 'tickets', 'responder', 'cerrar', 'vincular', 'cancelar',
   's',
   'sticker',
   'scrop',

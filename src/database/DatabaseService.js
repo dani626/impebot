@@ -1,5 +1,6 @@
 import mariadb from 'mariadb';
 import { CONFIG } from '../config.js';
+import { TICKET_DDL } from '../tickets/schema.js';
 
 class DatabaseService {
   constructor() {
@@ -161,6 +162,30 @@ class DatabaseService {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
+      await dbConn.query(`
+        CREATE TABLE IF NOT EXISTS \`relay_mirrors\` (
+          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+          \`whatsapp_jid\` VARCHAR(128) NOT NULL,
+          \`discord_channel_id\` VARCHAR(64) NOT NULL,
+          \`webhook_url\` TEXT DEFAULT NULL,
+          \`created_by\` VARCHAR(64) DEFAULT NULL,
+          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY \`uk_mirror\` (\`whatsapp_jid\`, \`discord_channel_id\`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      await dbConn.query(`
+        CREATE TABLE IF NOT EXISTS \`relay_aliases\` (
+          \`alias\` VARCHAR(64) NOT NULL PRIMARY KEY,
+          \`target\` VARCHAR(128) NOT NULL,
+          \`created_by\` VARCHAR(64) DEFAULT NULL,
+          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `);
+
+      if (CONFIG.tickets.enabled) {
+        for (const ddl of TICKET_DDL) await dbConn.query(ddl);
+      }
       console.log(`📋 [DatabaseService] Tablas requeridas verificadas / listas.`);
     } catch (err) {
       console.error(`❌ [DatabaseService] Error al verificar/crear tablas: ${err.message}`);
@@ -238,6 +263,22 @@ class DatabaseService {
       throw error;
     } finally {
       if (conn) conn.release();
+    }
+  }
+
+  async transaction(work) {
+    if (!this.pool) throw new Error('La base de datos no está disponible.');
+    const conn = await this.pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const result = await work(conn);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      await conn.rollback().catch(() => {});
+      throw err;
+    } finally {
+      conn.release();
     }
   }
 

@@ -118,6 +118,7 @@ export async function handleMessage(sock, msg) {
       case 'menu':
       case 'bot': {
         const helpMessage = `🤖 *${CONFIG.botName}* 🤖\n\n` +
+          (CONFIG.tickets.enabled ? `🎫 *Soporte:*\n• ${prefix}ticket: Abrir un ticket por privado.\n• ${prefix}tickets: Ver tus casos.\n• ${prefix}responder N | mensaje: Responder un caso.\n• ${prefix}cerrar N: Cerrar tu ticket.\n• ${prefix}vincular CODIGO: Vincular tu cuenta web.\n\n` : '') +
           `✨ *Comandos de Stickers:*\n` +
           `• \`${prefix}s\` : Convierte la imagen a sticker (tamaño completo).\n` +
           `• \`${prefix}scrop\` : Sticker recortado en cuadrado.\n` +

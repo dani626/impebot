@@ -1,4 +1,8 @@
-# ImpeBot — WhatsApp Sticker Bot & Discord Relay 🤖🔄
+# ImpeBot — Tickets WhatsApp / Discord e impecraft-web
+
+Sistema de soporte con apertura guiada por WhatsApp, canales privados de Discord, respuestas explícitas, notas internas, asignación, prioridades, cierre e historial persistente. Incluye integración con los tickets nativos de **impecraft-web**.
+
+Consulta [configuración, comandos, integración y pruebas de tickets](docs/tickets.md). En el modo de tickets (activado por defecto), los privados usan soporte y los grupos mantienen el relay descrito abajo. Para conservar el comportamiento anterior de privados, usa `TICKETS_ENABLED=false`.
 
 Bot modular para Node.js desarrollado con `@whiskeysockets/baileys`, `discord.js`, MariaDB y `wa-sticker-formatter`.
 Ofrece retransmisión bidireccional de mensajes (**WhatsApp ↔ Discord**) con prevención de bucles infinitos, impersonación mediante Webhooks y soporte completo para comandos de stickers.
@@ -29,7 +33,7 @@ Ofrece retransmisión bidireccional de mensajes (**WhatsApp ↔ Discord**) con p
 
 ## 🛠️ Requisitos Previos
 
-- **Node.js**: v18 o superior.
+- **Node.js**: v24 LTS o superior.
 - **MariaDB / MySQL**: Servidor local o remoto.
 - **FFmpeg**: Requerido para procesamiento de stickers y multimedia.
 - **Bot de Discord**: Creado en el [Discord Developer Portal](https://discord.com/developers/applications) con los intents `Guilds`, `GuildMessages`, `MessageContent` activados.

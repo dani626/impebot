@@ -1,0 +1,22 @@
+// ImpeBot: identidad WhatsApp verificada con un código de un solo uso.
+model ImpebotLink {
+  userId String @id @map("user_id") @db.Char(36)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "fk_impebot_user")
+  whatsappJid String? @unique(map: "uk_impebot_jid") @map("whatsapp_jid") @db.VarChar(128)
+  codeHash String? @unique(map: "uk_impebot_code") @map("code_hash") @db.Char(64)
+  codeExpires DateTime? @map("code_expires") @db.DateTime(3)
+  linkedAt DateTime? @map("linked_at") @db.DateTime(3)
+  @@map("impebot_links")
+}
+
+// Reintentos del puente: no se vuelve a crear un ticket o mensaje ya confirmado.
+model ImpebotEvent {
+  eventId String @id @map("event_id") @db.VarChar(191)
+  ticketId String @map("ticket_id") @db.Char(36)
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade, onUpdate: Restrict, map: "fk_impebot_event_ticket")
+  actorId String @map("actor_id") @db.Char(36)
+  action String @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  @@index([ticketId], map: "idx_impebot_event_ticket")
+  @@map("impebot_events")
+}

@@ -9,6 +9,9 @@ import { messageMappingRepository } from '../database/repositories/MessageMappin
 import { MessageTransformer } from './MessageTransformer.js';
 import { isBotCommand } from '../utils/commands.js';
 import { formatPhoneNumber, resolveParticipantActionText } from '../utils/whatsappMessage.js';
+import { ticketService } from '../tickets/index.js';
+import { mirrorService } from './MirrorService.js';
+import { isPrivateJid } from '../tickets/model.js';
 
 /**
  * Genera embeds formateados para estados de subida a Catbox.
@@ -148,6 +151,7 @@ export class RelayEngine {
   constructor() {
     this.cleanupTimer = null;
     this.isRunning = false;
+    this.subscriptions = [];
     /** @type {Set<string>} Caché de deduplicación para eventos recientes de grupos */
     this.recentGroupEvents = new Set();
   }
@@ -156,7 +160,7 @@ export class RelayEngine {
    * Inicia el motor de retransmisión suscribiéndose a los eventos de ambas plataformas.
    */
   start() {
-    if (!CONFIG.relay.enabled) {
+    if (!CONFIG.relay.enabled && !CONFIG.tickets.enabled) {
       console.log('ℹ️ [RelayEngine] El reenvío está deshabilitado en la configuración.');
       return;
     }
@@ -167,7 +171,7 @@ export class RelayEngine {
     console.log('🔄 [RelayEngine] Iniciando motor de retransmisión WhatsApp ↔ Discord...');
 
     // Escuchar mensajes de WhatsApp
-    whatsAppService.on('message', async (waData) => {
+    this.subscribe(whatsAppService, 'message', async (waData) => {
       try {
         await this.handleWhatsAppMessage(waData);
       } catch (err) {
@@ -176,7 +180,7 @@ export class RelayEngine {
     });
 
     // Escuchar mensajes eliminados en WhatsApp ("eliminar para todos")
-    whatsAppService.on('message.delete', async (deleteData) => {
+    this.subscribe(whatsAppService, 'message.delete', async (deleteData) => {
       try {
         await this.handleWhatsAppDelete(deleteData);
       } catch (err) {
@@ -185,7 +189,7 @@ export class RelayEngine {
     });
 
     // Escuchar eventos de entrada y salida de participantes en grupos de WhatsApp
-    whatsAppService.on('groupParticipantsUpdate', async (eventData) => {
+    this.subscribe(whatsAppService, 'groupParticipantsUpdate', async (eventData) => {
       try {
         await this.handleGroupParticipantsUpdate(eventData);
       } catch (err) {
@@ -194,7 +198,7 @@ export class RelayEngine {
     });
 
     // Escuchar mensajes de Discord
-    discordService.on('message', async (discordMsg) => {
+    this.subscribe(discordService, 'message', async (discordMsg) => {
       try {
         await this.handleDiscordMessage(discordMsg);
       } catch (err) {
@@ -202,7 +206,14 @@ export class RelayEngine {
       }
     });
 
+    mirrorService.start();
+
     console.log('🚀 [RelayEngine] Motor de retransmisión activo y listo.');
+  }
+
+  subscribe(service, event, listener) {
+    service.on(event, listener);
+    this.subscriptions.push({ service, event, listener });
   }
 
   /**
@@ -210,6 +221,8 @@ export class RelayEngine {
    * @param {object} waData 
    */
   async handleWhatsAppMessage(waData) {
+    if (await ticketService.handleWhatsApp(waData)) return;
+    if (!CONFIG.relay.enabled) return;
     const { jid, messageId, sender, pushName, text, isFromMe } = waData;
 
     // 1. Ignorar mensajes propios salvo RELAY_OWN_MESSAGES=true
@@ -321,6 +334,12 @@ export class RelayEngine {
       embeds: outgoingEmbeds,
     });
 
+    // Copiar a los canales espejo (otros servidores/canales) sin bloquear ni afectar al relay principal.
+    void Promise.resolve().then(() => whatsAppService.getChatName(jid)).catch(() => null).then((chatName) =>
+      mirrorService.forwardMessage(jid, chatName, {
+        content: outgoingContent, username, avatarURL, files, embeds: outgoingEmbeds,
+      }));
+
     if (!discordMessageId) return;
 
     // 9. Registrar mensaje en message_mappings para prevenir bucles, permitir citas y borrados
@@ -370,11 +389,15 @@ export class RelayEngine {
    * @param {import('discord.js').Message} discordMsg 
    */
   async handleDiscordMessage(discordMsg) {
+    if (await ticketService.handleDiscord(discordMsg)) return;
+    if (!CONFIG.relay.enabled) return;
     const channelId = discordMsg.channelId;
 
     // 1. Verificar si el canal de Discord está mapeado a un JID de WhatsApp
     const mapping = await channelMappingRepository.getByDiscordChannelId(channelId);
     if (!mapping) return;
+    // Los antiguos dm-* tampoco pueden saltarse las respuestas explícitas de tickets.
+    if (CONFIG.tickets.enabled && isPrivateJid(mapping.whatsapp_jid)) return;
 
     // 2. Prevención de bucles: verificar si el mensaje de Discord ya está registrado
     const alreadyProcessed = await messageMappingRepository.exists(null, discordMsg.id);
@@ -571,6 +594,7 @@ export class RelayEngine {
    * @param {object} eventData 
    */
   async handleGroupParticipantsUpdate(eventData) {
+    if (!CONFIG.relay.enabled) return;
     if (!CONFIG.relay.groupEvents) return;
 
     const { groupJid, participant, action, author, stubType, pushName, timestamp } = eventData;
@@ -671,6 +695,7 @@ export class RelayEngine {
       name: groupName,
       avatarUrl: groupAvatarUrl,
     });
+    void mirrorService.forwardEmbed(groupJid, embed, { name: groupName, avatarUrl: groupAvatarUrl });
   }
 
   /**
@@ -678,6 +703,9 @@ export class RelayEngine {
    */
   stop() {
     this.isRunning = false;
+    for (const { service, event, listener } of this.subscriptions) service.off(event, listener);
+    this.subscriptions.length = 0;
+    mirrorService.stop();
     console.log('🛑 [RelayEngine] Motor de retransmisión detenido.');
   }
 }

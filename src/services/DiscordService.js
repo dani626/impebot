@@ -4,6 +4,8 @@ import {
   GatewayIntentBits,
   WebhookClient,
   Events,
+  PermissionFlagsBits,
+  ChannelType,
 } from 'discord.js';
 import { CONFIG } from '../config.js';
 
@@ -30,6 +32,7 @@ export class DiscordService extends EventEmitter {
       intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildVoiceStates,
         GatewayIntentBits.MessageContent,
       ],
     });
@@ -48,6 +51,8 @@ export class DiscordService extends EventEmitter {
 
       this.emit('message', message);
     });
+
+    this.client.on(Events.InteractionCreate, (interaction) => this.emit('interaction', interaction));
 
     this.client.on(Events.Error, (err) => {
       console.error('[DiscordService] Error en cliente de Discord:', err);
@@ -119,6 +124,36 @@ export class DiscordService extends EventEmitter {
     }
 
     return await channel.send(content);
+  }
+
+  async createTicketChannel(ticket) {
+    if (!this.isReady || !CONFIG.discord.guildId) throw new Error('Discord no está disponible para tickets.');
+    const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
+    const roles = await guild.roles.fetch();
+    const staffIds = CONFIG.tickets.staffRoleIds;
+    if (staffIds.some((id) => id === guild.id || !roles.has(id))) throw new Error('TICKETS_STAFF_ROLE_IDS contiene un rol inválido.');
+    const permissions = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles];
+    return guild.channels.create({
+      name: `ticket-${ticket.number}-${ticket.subject}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 100),
+      type: ChannelType.GuildText,
+      parent: CONFIG.tickets.categoryId || undefined,
+      topic: `Ticket #${ticket.number} | ${ticket.category} | ${ticket.status} | Respuestas al jugador: /responder. Notas: /nota.`,
+      permissionOverwrites: [
+        { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+        { id: this.client.user.id, allow: [...permissions, PermissionFlagsBits.ManageChannels] },
+        ...staffIds.map((id) => ({ id, allow: permissions })),
+      ],
+    });
+  }
+
+  async registerGuildCommands(commands) {
+    const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
+    // create() actualiza por nombre y conserva comandos ajenos.
+    for (const command of commands) await guild.commands.create(command);
+  }
+
+  async registerTicketCommands(commands) {
+    return this.registerGuildCommands(commands);
   }
 
   /**

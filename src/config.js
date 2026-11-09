@@ -36,6 +36,26 @@ export const CONFIG = {
     webhookCacheTTL: parseInt(process.env.DISCORD_WEBHOOK_CACHE_TTL, 10) || 300000,
   },
 
+  music: {
+    enabled: process.env.MUSIC_ENABLED !== 'false',
+    defaultVolume: Math.min(100, Math.max(0, parseInt(process.env.MUSIC_DEFAULT_VOLUME, 10) || 50)),
+    maxDurationSeconds: (parseInt(process.env.MUSIC_MAX_MINUTES, 10) || 60) * 60,
+    maxQueueSize: parseInt(process.env.MUSIC_MAX_QUEUE, 10) || 50,
+    idleLeaveMs: (parseInt(process.env.MUSIC_IDLE_LEAVE_SECONDS, 10) || 120) * 1000,
+  },
+
+  tickets: {
+    enabled: process.env.TICKETS_ENABLED !== 'false',
+    categoryId: process.env.TICKETS_CATEGORY_ID || '',
+    staffRoleIds: (process.env.TICKETS_STAFF_ROLE_IDS || '').split(',').map((id) => id.trim()).filter(Boolean),
+    pollIntervalMs: Math.max(5000, parseInt(process.env.TICKETS_POLL_INTERVAL_MS, 10) || 15000),
+    web: {
+      url: process.env.IMPECRAFT_WEB_URL || '',
+      token: process.env.IMPECRAFT_BOT_TOKEN || '',
+      timeoutMs: 10000,
+    },
+  },
+
   // Configuración del motor Relay
   relay: {
     enabled: process.env.RELAY_ENABLED !== 'false',

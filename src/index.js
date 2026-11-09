@@ -5,6 +5,10 @@ import { discordService } from './services/DiscordService.js';
 import { relayEngine } from './relay/RelayEngine.js';
 import { handleMessage } from './handlers/messageHandler.js';
 import { consoleService } from './services/ConsoleService.js';
+import { ticketService } from './tickets/index.js';
+import { MusicService } from './services/MusicService.js';
+
+const musicService = new MusicService({ discord: discordService });
 
 async function bootstrap() {
   console.log('==================================================');
@@ -15,11 +19,17 @@ async function bootstrap() {
   try {
     await dbService.initialize(3, 2000);
   } catch (dbError) {
+    if (CONFIG.tickets.enabled) throw new Error('Tickets requiere MariaDB disponible. No se iniciaron los transportes.', { cause: dbError });
     console.warn(
       '⚠️ [Bootstrap] No se pudo conectar a MariaDB. Asegúrate de que el servicio esté corriendo y las credenciales en .env sean correctas.'
     );
     console.warn('⚠️ [Bootstrap] El relay no podrá persistir logs ni mapeos hasta que la base de datos esté disponible.');
   }
+
+  // Registrar rutas antes de conectar los transportes para no perder mensajes iniciales.
+  relayEngine.start();
+  ticketService.start();
+  musicService.start();
 
   // 2. Iniciar Servicio de WhatsApp (Baileys)
   try {
@@ -50,10 +60,7 @@ async function bootstrap() {
     console.error('❌ [Bootstrap] Error al conectar con Discord:', discordError.message);
   }
 
-  // 4. Iniciar Motor de Retransmisión (RelayEngine)
-  relayEngine.start();
-
-  // 5. Iniciar Lector de Comandos por Consola (Pterodactyl / Terminal)
+  // Iniciar lector de comandos por consola (Pterodactyl / Terminal).
   consoleService.start();
 }
 
@@ -63,6 +70,8 @@ async function handleShutdown(signal) {
   try {
     consoleService.stop();
     relayEngine.stop();
+    await ticketService.stop();
+    musicService.stop();
     discordService.destroy();
     await dbService.shutdown();
   } catch (err) {
@@ -77,4 +86,5 @@ process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 
 bootstrap().catch((err) => {
   console.error('❌ [Bootstrap] Error crítico no controlado:', err);
+  process.exitCode = 1;
 });

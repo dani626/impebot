@@ -5,3 +5,4 @@ auth_info_baileys/
 .env
 bot_settings.json
 .cursor/
+.test-runtime/
