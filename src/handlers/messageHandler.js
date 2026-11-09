@@ -3,7 +3,10 @@ import { getMediaFromMessage, createSticker } from '../services/stickerService.j
 import { whatsAppService } from '../services/WhatsAppService.js';
 import { extractWaText, parseWaTimestamp, normalizePresence, PRESENCE_TEXTS } from '../utils/whatsappMessage.js';
 import { parseCommand } from '../utils/commands.js';
-import { moderationService } from '../services/ModerationService.js';
+import { moderationService, MODERATION_COMMANDS, participantIds, userPart } from '../services/ModerationService.js';
+import { luckPermsService } from '../luckperms/LuckPermsService.js';
+import { decide, WHATSAPP_COMMAND_PERMISSIONS, whatsappSenderIds } from '../luckperms/permissions.js';
+import { handleAccountCommand } from '../luckperms/accountCommands.js';
 import { commandLogService } from '../services/CommandLogService.js';
 
 /**
@@ -38,6 +41,28 @@ export async function handleMessage(sock, msg) {
     // Registro de auditoría: cada comando queda en consola y en la base de datos con su resultado.
     const audit = { status: 'ok', detail: null };
     try {
+    // Permisos tipo plugin: LuckPerms decide; WA_STAFF_IDS siempre puede (acceso de emergencia).
+    // La moderación hace su propia comprobación (también acepta administradores del grupo).
+    let senderIds = whatsappSenderIds(msg);
+    const perm = WHATSAPP_COMMAND_PERMISSIONS[command];
+    if (perm && jid.endsWith('@g.us') && (!perm.public || command === 'mc') && luckPermsService.enabled) {
+      // En grupos el mensaje puede traer solo el LID: se añade el número desde los participantes.
+      const meta = await sock.groupMetadata(jid).catch(() => null);
+      const wanted = new Set(senderIds.map(userPart));
+      const entry = meta?.participants?.find((p) => participantIds(p).some((id) => wanted.has(userPart(id))));
+      if (entry) senderIds = [...new Set([...senderIds, ...participantIds(entry)])];
+    }
+    const isStaff = senderIds.some((id) => CONFIG.moderation.staff.includes(userPart(id)));
+    if (perm && !MODERATION_COMMANDS.has(command)) {
+      const { result } = await luckPermsService.check('whatsapp', senderIds, perm.node);
+      if (!decide(perm, result, { staff: isStaff })) {
+        audit.status = 'denegado';
+        audit.detail = `sin ${perm.node}`;
+        await sock.sendMessage(jid, { text: '⛔ No tienes permiso para usar este comando. / You do not have permission to use this command.' }, { quoted: msg });
+        return;
+      }
+    }
+
     switch (command) {
       case 's':
       case 'sticker':
@@ -137,6 +162,21 @@ export async function handleMessage(sock, msg) {
         break;
       }
 
+      case 'mc':
+      case 'mcvincular':
+      case 'mcdesvincular': {
+        try {
+          const result = await handleAccountCommand({ sock, msg, command, args, prefix, senderIds, isStaff });
+          audit.status = result.status;
+          audit.detail = result.detail || null;
+        } catch (lpErr) {
+          audit.status = 'error';
+          audit.detail = lpErr.message;
+          await sock.sendMessage(jid, { text: '❌ No se pudo consultar LuckPerms. Inténtalo más tarde. / Could not reach LuckPerms.' }, { quoted: msg }).catch(() => {});
+        }
+        break;
+      }
+
       case 'help':
       case 'menu':
       case 'bot': {
@@ -158,7 +198,11 @@ export async function handleMessage(sock, msg) {
           `• ${p}warn / ${p}advertir @usuario motivo : advertencia / warning\n` +
           `• ${p}warns / ${p}advertencias [@usuario]\n` +
           `• ${p}unwarn / ${p}quitaradvertencia @usuario [all]\n\n` +
-          `⚙️ *Estado / Status:*\n` +
+          (luckPermsService.enabled ? `🎮 *Minecraft:*\n` +
+          `• ${p}mc / ${p}minecraft : tu cuenta vinculada / your linked account\n` +
+          `• ${p}mcvincular / ${p}mclink Jugador @usuario (staff)\n` +
+          `• ${p}mcdesvincular / ${p}mcunlink Jugador (staff)\n\n` : '') +
+          `⚙️ *Estado / Status* (staff):\n` +
           `• ${p}presence / ${p}presencia [online|offline]\n` +
           `• ${p}online / ${p}enlinea · ${p}offline / ${p}desconectado\n` +
           `• ${p}help / ${p}ayuda / ${p}menu`;

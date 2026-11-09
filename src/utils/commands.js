@@ -31,6 +31,10 @@ export const COMMAND_ALIASES = {
   warn: ['advertir', 'advertencia'],
   warns: ['advertencias', 'warnings'],
   unwarn: ['quitaradvertencia', 'desadvertir'],
+  // Cuenta de Minecraft (LuckPerms)
+  mc: ['minecraft', 'micuenta'],
+  mcvincular: ['mclink', 'vincularmc'],
+  mcdesvincular: ['mcunlink', 'desvincularmc'],
 };
 
 /** alias o nombre canónico → nombre canónico */

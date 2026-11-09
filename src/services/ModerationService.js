@@ -2,6 +2,8 @@ import { CONFIG } from '../config.js';
 import { moderationRepository } from '../database/repositories/ModerationRepository.js';
 import { commandLogService } from './CommandLogService.js';
 import { getContextInfo, formatPhoneNumber } from '../utils/whatsappMessage.js';
+import { luckPermsService } from '../luckperms/LuckPermsService.js';
+import { decide, PERMISSIONS, WHATSAPP_COMMAND_PERMISSIONS } from '../luckperms/permissions.js';
 
 export const MODERATION_COMMANDS = new Set(['borrar', 'ban', 'desban', 'bans', 'kick', 'warn', 'warns', 'unwarn']);
 
@@ -24,8 +26,16 @@ const idsOfWarning = (w) => String(w.user_ids || w.primary_jid).split(',').filte
 const displayName = (jid) => (jid.endsWith('@s.whatsapp.net') ? formatPhoneNumber(jid) : userPart(jid));
 
 export class ModerationService {
-  constructor({ repo = moderationRepository, config = CONFIG.moderation, logger = commandLogService } = {}) {
+  /**
+   * @param {object} deps
+   * @param {(ids: string[], node: string) => Promise<true|false|undefined>} [deps.permissions] consulta a LuckPerms
+   */
+  constructor({
+    repo = moderationRepository, config = CONFIG.moderation, logger = commandLogService,
+    permissions = async (ids, node) => (await luckPermsService.check('whatsapp', ids, node)).result,
+  } = {}) {
     this.repo = repo;
+    this.permissions = permissions;
     this.config = config;
     this.logger = logger;
     this.whatsapp = null;
@@ -42,13 +52,26 @@ export class ModerationService {
     this.whatsapp?.off('groupParticipantsUpdate', this.onParticipants);
   }
 
-  /** ¿Puede esta persona moderar? Staff global o administrador del grupo. */
-  authorize(meta, senderIds) {
+  /**
+   * ¿Puede esta persona moderar? Staff global (WA_STAFF_IDS), permiso en LuckPerms
+   * o administrador del grupo. Un permiso negado en LuckPerms quita también el de admin del grupo.
+   * @param {true|false|undefined} [luckperms] resultado de LuckPerms para el permiso del comando
+   */
+  authorize(meta, senderIds, luckperms) {
     const entry = findParticipant(meta, senderIds);
     const ids = [...new Set([...senderIds, ...(entry ? participantIds(entry) : [])])];
     const staff = ids.some((id) => this.config.staff.includes(userPart(id)));
     const admin = isAdmin(entry);
-    return { allowed: staff || (this.config.allowGroupAdmins && admin), staff, admin, ids };
+    const allowed = decide({}, luckperms, { staff, fallback: this.config.allowGroupAdmins && admin });
+    return { allowed, staff, admin, ids, luckperms };
+  }
+
+  /** Igual que authorize() pero consultando LuckPerms con todos los identificadores del autor. */
+  async authorizeCommand(meta, senderIds, command) {
+    const { ids } = this.authorize(meta, senderIds);
+    const node = WHATSAPP_COMMAND_PERMISSIONS[command]?.node;
+    const luckperms = node ? await this.permissions(ids, node).catch(() => undefined) : undefined;
+    return this.authorize(meta, senderIds, luckperms);
   }
 
   /**
@@ -66,7 +89,7 @@ export class ModerationService {
 
     const meta = await sock.groupMetadata(groupJid);
     const senderIds = [msg.key.participant, msg.key.participantAlt].map(norm).filter(Boolean);
-    const auth = this.authorize(meta, senderIds);
+    const auth = await this.authorizeCommand(meta, senderIds, command);
     if (!auth.allowed) {
       await reply('⛔ No tienes permiso para usar este comando. / You do not have permission to use this command.');
       return { status: 'denegado', detail: 'sin permisos' };
@@ -144,7 +167,8 @@ export class ModerationService {
       await reply('⚠️ No puedes aplicártelo a ti mismo. / You cannot do this to yourself.');
       return { error: { status: 'denegado', detail: 'objetivo es el autor' } };
     }
-    if (ids.some((id) => this.config.staff.includes(userPart(id))) || isAdmin(entry)) {
+    const exempt = async () => (await this.permissions(ids, PERMISSIONS.moderationExempt.node).catch(() => undefined)) === true;
+    if (ids.some((id) => this.config.staff.includes(userPart(id))) || isAdmin(entry) || await exempt()) {
       await reply('⚠️ No se puede aplicar a un administrador ni al staff. Quítale el rango primero. / Not allowed on admins or staff. Remove their rank first.');
       return { error: { status: 'denegado', detail: 'objetivo protegido' } };
     }

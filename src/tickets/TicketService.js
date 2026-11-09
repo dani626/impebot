@@ -1,6 +1,7 @@
 import { AttachmentBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { resolveCommandName } from '../utils/commands.js';
 import { CATEGORIES, PRIORITIES, isPrivateJid, parseOpening, ticketError, validateBody, waEventId } from './model.js';
+import { decide, PERMISSIONS } from '../luckperms/permissions.js';
 
 export function ticketCommands() {
   const commands = [
@@ -25,8 +26,9 @@ const STATUS_LABEL = { OPEN: 'Abierto', PENDING: 'Esperando tu respuesta', CLOSE
 const splitText = (text, max = 1900) => text.match(new RegExp(`[\\s\\S]{1,${max}}`, 'g')) || [];
 
 export class TicketService {
-  constructor({ backend, repository, whatsapp, discord, config, transformMedia }) {
-    Object.assign(this, { backend, repository, whatsapp, discord, config, transformMedia });
+  constructor({ backend, repository, whatsapp, discord, config, transformMedia, permissions = async () => undefined }) {
+    // permissions(discordUserId, node) → true/false/undefined (LuckPerms)
+    Object.assign(this, { backend, repository, whatsapp, discord, config, transformMedia, permissions });
     this.queues = new Map();
     this.wizards = new Map();
     this.running = false;
@@ -309,8 +311,9 @@ export class TicketService {
       if (interaction.guildId !== this.config.guildId) throw ticketError('Servidor no autorizado.', 403);
       // Se consultan roles actuales, no los de una caché de interacciones anterior.
       const member = await interaction.guild.members.fetch(interaction.user.id);
-      const staff = member.permissions.has(PermissionFlagsBits.ManageGuild) || this.config.staffRoleIds.some((id) => member.roles.cache.has(id));
-      if (!staff) throw ticketError('Necesitas un rol de soporte.', 403);
+      const byRole = member.permissions.has(PermissionFlagsBits.ManageGuild) || this.config.staffRoleIds.some((id) => member.roles.cache.has(id));
+      const byLuckPerms = await this.permissions(interaction.user.id, PERMISSIONS.ticketsStaff.node).catch(() => undefined);
+      if (!decide(PERMISSIONS.ticketsStaff, byLuckPerms, { fallback: byRole })) throw ticketError('Necesitas un rol de soporte.', 403);
       const route = await this.repository.routeByChannel(interaction.channelId);
       if (!route || !route.ticket_key.startsWith(`${this.backend.name}:`)) throw ticketError('Este canal no pertenece al modo de tickets activo.');
       const actor = { id: interaction.user.id, username: member.displayName, role: member.permissions.has(PermissionFlagsBits.ManageGuild) ? 'MODERATOR' : 'HELPER', platform: 'discord' };

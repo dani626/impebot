@@ -8,8 +8,11 @@ import { consoleService } from './services/ConsoleService.js';
 import { ticketService } from './tickets/index.js';
 import { moderationService } from './services/ModerationService.js';
 import { MusicService } from './services/MusicService.js';
+import { luckPermsService } from './luckperms/LuckPermsService.js';
+import { MinecraftDiscordCommands } from './luckperms/MinecraftDiscordCommands.js';
 
 const musicService = new MusicService({ discord: discordService });
+const minecraftCommands = new MinecraftDiscordCommands({ discord: discordService });
 
 async function bootstrap() {
   console.log('==================================================');
@@ -26,6 +29,10 @@ async function bootstrap() {
     );
     console.warn('⚠️ [Bootstrap] El relay no podrá persistir logs ni mapeos hasta que la base de datos esté disponible.');
   }
+
+  // Permisos desde LuckPerms (opcional). Si no conecta, se usan las reglas por defecto.
+  await luckPermsService.start();
+  minecraftCommands.start();
 
   // Registrar rutas antes de conectar los transportes para no perder mensajes iniciales.
   relayEngine.start();
@@ -77,6 +84,8 @@ async function handleShutdown(signal) {
     await ticketService.stop();
     musicService.stop();
     moderationService.stop();
+    minecraftCommands.stop();
+    await luckPermsService.stop();
     whatsAppService.stop();
     discordService.destroy();
     await dbService.shutdown();

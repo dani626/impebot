@@ -96,6 +96,27 @@ export const CONFIG = {
     maxMediaBytes: (parseInt(process.env.RELAY_MAX_MEDIA_MB, 10) || 100) * 1024 * 1024,
   },
 
+  // Permisos de comandos desde LuckPerms (base MySQL compartida por la red de Minecraft)
+  luckperms: {
+    enabled: process.env.LUCKPERMS_ENABLED === 'true',
+    db: {
+      host: process.env.LUCKPERMS_DB_HOST || 'localhost',
+      port: parseInt(process.env.LUCKPERMS_DB_PORT, 10) || 3306,
+      user: process.env.LUCKPERMS_DB_USER || '',
+      password: process.env.LUCKPERMS_DB_PASSWORD || '',
+      database: process.env.LUCKPERMS_DB_NAME || 'luckperms',
+    },
+    tablePrefix: process.env.LUCKPERMS_TABLE_PREFIX || 'luckperms_',
+    // Contextos "server" que cuentan para el bot, además de los permisos globales
+    servers: (process.env.LUCKPERMS_SERVERS || 'impebot').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    // Respaldo por si se pierde un aviso del messaging service
+    cacheTtlMs: (parseInt(process.env.LUCKPERMS_CACHE_SECONDS, 10) || 60) * 1000,
+    // Cada cuánto se leen los avisos de luckperms_messenger (0 = no escuchar)
+    pollIntervalMs: Number.isNaN(parseInt(process.env.LUCKPERMS_POLL_MS, 10)) ? 1000 : parseInt(process.env.LUCKPERMS_POLL_MS, 10),
+    // Meta de LuckPerms donde se guarda la cuenta de cada plataforma (/lp user X meta set whatsapp 519...)
+    metaKeys: { whatsapp: 'whatsapp', discord: 'discord' },
+  },
+
   // Configuración de Catbox para subida y reproducción de videos
   catbox: {
     enabled: process.env.CATBOX_ENABLED !== 'false',

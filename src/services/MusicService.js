@@ -14,6 +14,8 @@ import youtubeDl from 'youtube-dl-exec';
 import spotifyUrlInfo from 'spotify-url-info';
 import { CONFIG } from '../config.js';
 import { ensureFfmpeg, ensureYtDlp } from '../utils/ensureBinaries.js';
+import { luckPermsService } from '../luckperms/LuckPermsService.js';
+import { decide, musicPermission } from '../luckperms/permissions.js';
 
 const require = createRequire(import.meta.url);
 const spotify = spotifyUrlInfo(fetch);
@@ -246,9 +248,13 @@ class GuildMusicQueue {
 }
 
 export class MusicService {
-  /** @param {{ discord: import('./DiscordService.js').DiscordService }} deps */
-  constructor({ discord }) {
+  /**
+   * @param {{ discord: import('./DiscordService.js').DiscordService,
+   *   permissions?: (discordUserId: string, node: string) => Promise<true|false|undefined> }} deps
+   */
+  constructor({ discord, permissions = async (id, node) => (await luckPermsService.check('discord', [id], node)).result }) {
     this.discord = discord;
+    this.permissions = permissions;
     /** @type {Map<string, GuildMusicQueue>} */
     this.queues = new Map();
     this.onInteraction = (interaction) => void this.handleInteraction(interaction)
@@ -405,6 +411,7 @@ export class MusicService {
     const guildId = interaction.guildId;
     const queue = this.queues.get(guildId);
     const name = interaction.commandName;
+    if (!(await this.allowed(interaction, name))) return;
 
     if (name === 'play') return this.handlePlay(interaction, queue);
 
@@ -453,12 +460,22 @@ export class MusicService {
     }
   }
 
+  /** Permiso de LuckPerms (impebot.music.*). Libre por defecto; solo un "false" explícito lo bloquea. */
+  async allowed(interaction, name) {
+    const perm = musicPermission(name);
+    const result = await this.permissions(interaction.user.id, perm.node).catch(() => undefined);
+    if (decide(perm, result)) return true;
+    await interaction.reply({ content: `⛔ No tienes permiso para esto (${perm.node}).`, flags: 64 });
+    return false;
+  }
+
   /** Botones del mensaje "Reproduciendo ahora". */
   async handleButton(interaction) {
     if (!interaction.guildId || (CONFIG.discord.guildId && interaction.guildId !== CONFIG.discord.guildId)) return;
     const reply = (content) => interaction.reply({ content, flags: 64 });
     const queue = this.queues.get(interaction.guildId);
     const action = interaction.customId.slice(MUSIC_BUTTON_PREFIX.length);
+    if (!(await this.allowed(interaction, action))) return;
 
     if (!queue || !queue.nowPlaying) {
       await reply('Esta reproducción ya terminó. Usa `/play` para empezar otra.');
