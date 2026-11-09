@@ -13,6 +13,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import youtubeDl from 'youtube-dl-exec';
 import spotifyUrlInfo from 'spotify-url-info';
 import { CONFIG } from '../config.js';
+import { ensureFfmpeg, ensureYtDlp } from '../utils/ensureBinaries.js';
 
 const require = createRequire(import.meta.url);
 const spotify = spotifyUrlInfo(fetch);
@@ -156,11 +157,25 @@ export class MusicService {
 
   start() {
     if (!CONFIG.music.enabled) return;
+    this.prepareError = null;
+    this.ready = this.prepare();
     this.discord.on('interaction', this.onInteraction);
     this.discord.on('ready', () => {
       void this.discord.registerGuildCommands(musicCommands())
         .catch((err) => console.error('[MusicService] Registro de comandos:', err.message));
     });
+  }
+
+  /** Comprueba (y si hace falta descarga) yt-dlp y ffmpeg. No bloquea el arranque. */
+  async prepare() {
+    try {
+      const [ytdlp, ffmpeg] = [await ensureYtDlp(), await ensureFfmpeg()];
+      process.env.FFMPEG_PATH = ffmpeg;
+      console.log(`🎵 [Music] Listo: yt-dlp ${ytdlp} · ffmpeg ${ffmpeg}`);
+    } catch (err) {
+      this.prepareError = err;
+      console.error(`❌ [Music] La música no está disponible: ${err.message}`);
+    }
   }
 
   stop() {
@@ -277,6 +292,11 @@ export class MusicService {
     }
 
     await interaction.deferReply();
+    await this.ready;
+    if (this.prepareError) {
+      await interaction.editReply('❌ La música no está disponible en este servidor ahora mismo (faltan componentes). Avisa al administrador.');
+      return;
+    }
     const input = interaction.options.getString('cancion', true).trim();
     let newTracks = [];
     let isSpotifyList = false;
