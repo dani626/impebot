@@ -34,21 +34,23 @@ async function bootstrap() {
   moderationService.start(whatsAppService);
 
   // 2. Iniciar Servicio de WhatsApp (Baileys)
+  // El manejador de comandos se registra antes de conectar: si el primer intento falla,
+  // los reintentos posteriores siguen atendiendo comandos.
+  whatsAppService.on('rawMessage', async (msg) => {
+    try {
+      if (whatsAppService.sock) {
+        await handleMessage(whatsAppService.sock, msg);
+      }
+    } catch (stickerErr) {
+      console.error('[Bootstrap] Error en manejador de stickers:', stickerErr);
+    }
+  });
+
   try {
     await whatsAppService.start();
-
-    // Conectar el manejador de stickers existente a los mensajes crudos de WhatsApp
-    whatsAppService.on('rawMessage', async (msg) => {
-      try {
-        if (whatsAppService.sock) {
-          await handleMessage(whatsAppService.sock, msg);
-        }
-      } catch (stickerErr) {
-        console.error('[Bootstrap] Error en manejador de stickers:', stickerErr);
-      }
-    });
   } catch (waError) {
     console.error('❌ [Bootstrap] Error al iniciar WhatsAppService:', waError);
+    whatsAppService.scheduleReconnect();
   }
 
   // 3. Iniciar Servicio de Discord
@@ -75,6 +77,7 @@ async function handleShutdown(signal) {
     await ticketService.stop();
     musicService.stop();
     moderationService.stop();
+    whatsAppService.stop();
     discordService.destroy();
     await dbService.shutdown();
   } catch (err) {
@@ -83,6 +86,18 @@ async function handleShutdown(signal) {
     process.exit(0);
   }
 }
+
+// Una promesa sin manejar en algún listener no debe tumbar todo el bot (Node la convierte en fallo fatal).
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [Proceso] Promesa rechazada sin manejar:', reason);
+});
+
+// Una excepción síncrona deja el proceso en estado desconocido: registrar y salir con error
+// para que el gestor (Pterodactyl, Docker, PM2) lo reinicie.
+process.on('uncaughtException', (err) => {
+  console.error('❌ [Proceso] Excepción no capturada, reiniciando:', err);
+  process.exit(1);
+});
 
 process.on('SIGINT', () => handleShutdown('SIGINT'));
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));

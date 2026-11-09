@@ -28,6 +28,40 @@ export class WhatsAppService extends EventEmitter {
     this.contactCache = new Map();
     /** @type {Map<string, { stubType: number, author: string|null, pushName: string|null, timestamp: number, expiresAt: number }>} */
     this.stubMessageCache = new Map();
+    this.reconnectTimer = null;
+    this.reconnectAttempts = 0;
+    this.stopping = false;
+  }
+
+  /**
+   * Programa un reintento de conexión con espera exponencial (3s, 6s, 12s… hasta 60s).
+   * Nunca deja promesas sin manejar: si start() falla, se vuelve a programar.
+   */
+  scheduleReconnect() {
+    if (this.stopping || this.reconnectTimer) return;
+    const delay = Math.min(60000, 3000 * 2 ** this.reconnectAttempts);
+    this.reconnectAttempts++;
+    console.log(`🔁 [WhatsAppService] Reintento de conexión #${this.reconnectAttempts} en ${Math.round(delay / 1000)}s...`);
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      try {
+        await this.start();
+      } catch (err) {
+        console.error('[WhatsAppService] Falló el reintento de conexión:', err.message);
+        this.scheduleReconnect();
+      }
+    }, delay);
+  }
+
+  /** Cierra el socket actual sin disparar reconexiones. */
+  stop() {
+    this.stopping = true;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.isReady = false;
+    const sock = this.sock;
+    this.sock = null;
+    try { sock?.end(undefined); } catch { /* ya cerrado */ }
   }
 
   /**
@@ -63,8 +97,15 @@ export class WhatsAppService extends EventEmitter {
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
     const { version } = await fetchLatestBaileysVersion();
+    if (this.stopping) return null;
 
-    this.sock = makeWASocket({
+    // Cerrar el socket anterior. Sus eventos se ignoran (ver guardia en connection.update),
+    // así su "close" final no programa otra reconexión.
+    const previous = this.sock;
+    this.sock = null;
+    try { previous?.end(undefined); } catch { /* ya cerrado */ }
+
+    const sock = makeWASocket({
       version,
       logger: pino({ level: 'silent' }),
       printQRInTerminal: false,
@@ -73,6 +114,7 @@ export class WhatsAppService extends EventEmitter {
       browser: ['Ubuntu', 'Chrome', '20.0.04'],
       markOnlineOnConnect: this.currentPresence === 'available',
     });
+    this.sock = sock;
 
     // Guardar credenciales al cambiar
     this.sock.ev.on('creds.update', saveCreds);
@@ -96,6 +138,8 @@ export class WhatsAppService extends EventEmitter {
 
     // Manejo de conexión
     this.sock.ev.on('connection.update', async (update) => {
+      // Eventos de un socket ya reemplazado o detenido: ignorarlos.
+      if (sock !== this.sock) return;
       const { connection, lastDisconnect, qr } = update;
 
       if (qr && (!pairingNumber || this.sock.authState.creds.registered)) {
@@ -115,12 +159,14 @@ export class WhatsAppService extends EventEmitter {
         this.emit('connection.close', { statusCode, shouldReconnect });
 
         if (shouldReconnect) {
-          setTimeout(() => this.start(), 3000);
+          this.scheduleReconnect();
         } else {
-          console.log('❌ [WhatsAppService] Sesión cerrada permanentemente. Elimina auth_info_baileys para volver a escanear.');
+          console.error('❌ [WhatsAppService] Sesión cerrada permanentemente (logged out). WhatsApp queda DESCONECTADO: elimina auth_info_baileys y reinicia para volver a vincular.');
+          this.emit('loggedOut', { statusCode });
         }
       } else if (connection === 'open') {
         this.isReady = true;
+        this.reconnectAttempts = 0;
         console.log('\n==================================================');
         console.log('✅ ¡Bot conectado exitosamente a WhatsApp!');
         console.log('==================================================\n');

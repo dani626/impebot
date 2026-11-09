@@ -1,6 +1,6 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { CONFIG } from '../config.js';
-import { discordService } from '../services/DiscordService.js';
+import { discordService, NO_MENTIONS } from '../services/DiscordService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { mirrorRepository, aliasRepository, ALL_CHATS } from '../database/repositories/MirrorRepository.js';
 
@@ -83,7 +83,7 @@ export class MirrorService {
       try {
         await discordService.sendViaWebhook(mirror.webhook_url, {
           content: content || undefined, username, avatarURL: avatarURL || undefined, files,
-          embeds: hasEmbeds ? embeds : undefined,
+          embeds: hasEmbeds ? embeds : undefined, allowedMentions: NO_MENTIONS,
         });
         return;
       } catch (err) {
@@ -93,7 +93,7 @@ export class MirrorService {
     try {
       await discordService.sendMessage(mirror.discord_channel_id, {
         content: content ? `**[${label}]:** ${content}` : `**[${label}]**`,
-        files, embeds: hasEmbeds ? embeds : undefined,
+        files, embeds: hasEmbeds ? embeds : undefined, allowedMentions: NO_MENTIONS,
       });
     } catch (err) {
       console.error(`[MirrorService] No se pudo enviar al espejo ${mirror.discord_channel_id}:`, err.message);

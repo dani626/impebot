@@ -12,6 +12,34 @@ const MEDIA_DEFINITIONS = {
   documentMessage: (msg) => ({ fileName: msg.fileName || `document_${Date.now()}` }),
 };
 
+const MB = 1024 * 1024;
+const formatMb = (bytes) => `${(bytes / MB).toFixed(1)} MB`;
+
+export class MediaTooLargeError extends Error {
+  constructor(size, limit) {
+    super(`${formatMb(size)} supera el límite de ${formatMb(limit)}`);
+    this.size = size;
+    this.limit = limit;
+  }
+}
+
+/** fileLength de Baileys puede venir como número, string o Long. */
+export function toByteCount(value) {
+  if (value === null || value === undefined) return 0;
+  const n = typeof value?.toNumber === 'function' ? value.toNumber() : Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Tamaño máximo que se descarga de un adjunto. Lo que va directo a Discord no puede superar
+ * su límite de subida; los videos que se suben a Catbox admiten RELAY_MAX_MEDIA_MB.
+ */
+export function mediaSizeLimit(info, config = CONFIG) {
+  const direct = config.catbox?.maxDirectUploadBytes || 10 * MB;
+  if (info?.isVideo && config.catbox?.enabled) return Math.max(direct, config.relay?.maxMediaBytes || 100 * MB);
+  return direct;
+}
+
 export class MessageTransformer {
   /**
    * Transforma un mensaje entrante de WhatsApp al formato de Discord.
@@ -59,9 +87,15 @@ export class MessageTransformer {
     const mediaKey = Object.keys(MEDIA_DEFINITIONS).find((key) => message?.[key]);
 
     if (mediaKey) {
+      const info = MEDIA_DEFINITIONS[mediaKey](message[mediaKey]);
+      const limit = mediaSizeLimit(info);
+      const declaredBytes = toByteCount(message[mediaKey].fileLength);
       try {
+        // No descargar a memoria archivos que de todos modos no se pueden reenviar (documentos de hasta 2 GB).
+        if (declaredBytes > limit) throw new MediaTooLargeError(declaredBytes, limit);
         const buffer = await downloadMediaMessage(rawMessage, 'buffer', {});
-        const info = MEDIA_DEFINITIONS[mediaKey](message[mediaKey]);
+        // fileLength puede faltar o mentir: comprobar también el tamaño real.
+        if (buffer.length > limit) throw new MediaTooLargeError(buffer.length, limit);
         const fileName = info.fileName || `${info.prefix}_${Date.now()}.${info.ext}`;
 
         if (info.isVideo) {
@@ -82,8 +116,13 @@ export class MessageTransformer {
           files.push(new AttachmentBuilder(buffer, { name: fileName }));
         }
       } catch (mediaError) {
-        console.error('[MessageTransformer] Error descargando multimedia de WhatsApp:', mediaError.message);
-        content = `${content}\n⚠️ *(No se pudo descargar el archivo adjunto de WhatsApp)*`;
+        if (mediaError instanceof MediaTooLargeError) {
+          console.warn(`[MessageTransformer] Adjunto omitido: ${mediaError.message}`);
+          content = `${content}\n⚠️ *(Archivo adjunto de ${formatMb(mediaError.size)} omitido: supera el límite de ${formatMb(mediaError.limit)})*`;
+        } else {
+          console.error('[MessageTransformer] Error descargando multimedia de WhatsApp:', mediaError.message);
+          content = `${content}\n⚠️ *(No se pudo descargar el archivo adjunto de WhatsApp)*`;
+        }
       }
     }
 

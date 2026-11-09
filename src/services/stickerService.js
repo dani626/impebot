@@ -3,6 +3,9 @@ import { Sticker, StickerTypes } from 'wa-sticker-formatter';
 import { CONFIG } from '../config.js';
 import { getContextInfo } from '../utils/whatsappMessage.js';
 
+/** Imágenes de origen más grandes no se descargan (evita agotar memoria). */
+const MAX_STICKER_SOURCE_BYTES = 15 * 1024 * 1024;
+
 /**
  * Helper para construir la estructura de mensaje citado para descarga multimedia.
  * @private
@@ -64,6 +67,10 @@ export function getMediaFromMessage(msg) {
  * @returns {Promise<Buffer>} Buffer del sticker WebP
  */
 export async function createSticker(mediaTarget, options = {}) {
+  const declared = Number(mediaTarget.mediaMessage?.message?.imageMessage?.fileLength) || 0;
+  if (declared > MAX_STICKER_SOURCE_BYTES) {
+    throw new Error(`La imagen pesa demasiado para convertirla en sticker (${Math.round(declared / 1024 / 1024)} MB).`);
+  }
   const buffer = await downloadMediaMessage(
     mediaTarget.mediaMessage,
     'buffer',

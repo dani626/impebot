@@ -92,6 +92,8 @@ export const CONFIG = {
     relayOwnMessages: process.env.RELAY_OWN_MESSAGES === 'true',
     // Notificaciones de entrada y salida de miembros en grupos de WhatsApp hacia Discord (embed)
     groupEvents: process.env.RELAY_GROUP_EVENTS !== 'false',
+    // Tamaño máximo de un video que se descarga para subirlo a Catbox (el resto de adjuntos usa el límite de Discord)
+    maxMediaBytes: (parseInt(process.env.RELAY_MAX_MEDIA_MB, 10) || 100) * 1024 * 1024,
   },
 
   // Configuración de Catbox para subida y reproducción de videos

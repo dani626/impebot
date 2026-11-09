@@ -1,7 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { CONFIG } from '../config.js';
 import { whatsAppService } from '../services/WhatsAppService.js';
-import { discordService } from '../services/DiscordService.js';
+import { discordService, NO_MENTIONS } from '../services/DiscordService.js';
 import { catboxService } from '../services/CatboxService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { userMappingRepository } from '../database/repositories/UserMappingRepository.js';
@@ -68,6 +68,7 @@ async function deliverToDiscord(mapping, { content, username, avatarURL, files, 
         avatarURL: avatarURL || undefined,
         files,
         embeds: embeds?.length > 0 ? embeds : undefined,
+        allowedMentions: NO_MENTIONS,
       });
       if (result?.id) return result.id;
     } catch (webhookErr) {
@@ -81,6 +82,7 @@ async function deliverToDiscord(mapping, { content, username, avatarURL, files, 
       content: botContent,
       files,
       embeds: embeds?.length > 0 ? embeds : undefined,
+      allowedMentions: NO_MENTIONS,
     });
     return sentMsg?.id || null;
   }
@@ -104,6 +106,7 @@ async function deliverSystemEmbed(mapping, embed, { name, avatarUrl } = {}) {
         username,
         avatarURL: avatarUrl || undefined,
         embeds: [embed],
+        allowedMentions: NO_MENTIONS,
       });
       if (result?.id) return result.id;
     } catch (webhookErr) {
@@ -115,6 +118,7 @@ async function deliverSystemEmbed(mapping, embed, { name, avatarUrl } = {}) {
     try {
       const sentMsg = await discordService.sendMessage(mapping.discord_channel_id, {
         embeds: [embed],
+        allowedMentions: NO_MENTIONS,
       });
       return sentMsg?.id || null;
     } catch (chanErr) {
@@ -136,6 +140,7 @@ async function updateDiscordMessage(mapping, messageId, { content, username, emb
     return await discordService.editWebhookMessage(mapping.webhook_url, messageId, {
       content: content || undefined,
       embeds,
+      allowedMentions: NO_MENTIONS,
     });
   }
   if (mapping.discord_channel_id) {
@@ -143,6 +148,7 @@ async function updateDiscordMessage(mapping, messageId, { content, username, emb
     return await discordService.editChannelMessage(mapping.discord_channel_id, messageId, {
       content: botContent,
       embeds,
+      allowedMentions: NO_MENTIONS,
     });
   }
 }

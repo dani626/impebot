@@ -11,6 +11,12 @@ import { CONFIG } from '../config.js';
 import { commandLogService } from './CommandLogService.js';
 import { SLASH_ALIASES, withSlashAliases } from '../utils/slashAliases.js';
 
+/**
+ * Contenido reenviado desde WhatsApp nunca debe notificar a nadie en Discord:
+ * sin esto, un "@everyone" escrito en un grupo avisaría a todo el servidor (también en los espejos públicos).
+ */
+export const NO_MENTIONS = Object.freeze({ parse: [] });
+
 export class DiscordService extends EventEmitter {
   constructor() {
     super();
