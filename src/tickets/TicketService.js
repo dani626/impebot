@@ -1,7 +1,7 @@
 import { AttachmentBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { resolveCommandName } from '../utils/commands.js';
 import { CATEGORIES, PRIORITIES, isPrivateJid, parseOpening, ticketError, validateBody, waEventId } from './model.js';
-import { decide, PERMISSIONS } from '../luckperms/permissions.js';
+import { decide, deniedText, PERMISSIONS, TICKET_PLAYER_PERMISSIONS, UNAVAILABLE, whatsappSenderIds } from '../luckperms/permissions.js';
 
 export function ticketCommands() {
   const commands = [
@@ -26,9 +26,17 @@ const STATUS_LABEL = { OPEN: 'Abierto', PENDING: 'Esperando tu respuesta', CLOSE
 const splitText = (text, max = 1900) => text.match(new RegExp(`[\\s\\S]{1,${max}}`, 'g')) || [];
 
 export class TicketService {
-  constructor({ backend, repository, whatsapp, discord, config, transformMedia, permissions = async () => undefined }) {
-    // permissions(discordUserId, node) → true/false/undefined (LuckPerms)
-    Object.assign(this, { backend, repository, whatsapp, discord, config, transformMedia, permissions });
+  /**
+   * @param {object} deps
+   * @param {(platform: 'whatsapp'|'discord', ids: string[], node: string) => Promise<object>} [deps.permissions] LuckPerms
+   * @param {(account: { ids: string[], username: string, minecraftUuid?: string }) => Promise<{ player, linked }>} [deps.onLinked]
+   *   guarda en LuckPerms el vínculo verificado por la web
+   */
+  constructor({
+    backend, repository, whatsapp, discord, config, transformMedia,
+    permissions = async () => UNAVAILABLE, onLinked = async () => ({ player: null, linked: false }),
+  }) {
+    Object.assign(this, { backend, repository, whatsapp, discord, config, transformMedia, permissions, onLinked });
     this.queues = new Map();
     this.wizards = new Map();
     this.running = false;
@@ -206,11 +214,31 @@ export class TicketService {
     if (command && timestamp && Date.now() / 1000 - timestamp > 180) return;
     const reply = (value) => this.whatsapp.sendMessage(jid, { text: value });
     const actor = { id: jid, username: pushName, role: 'USER', platform: 'whatsapp' };
+    const senderIds = whatsappSenderIds(data.rawMessage || { key: { remoteJid: jid } });
     if (command === 'vincular') {
+      // Los códigos del juego (8 cifras, /whatsapp link) los atiende el manejador de comandos (gameLink.js).
+      // Sin LuckPerms nadie más los atiende y van a la web, que responde que el código no vale.
+      if (/^\d{8}$/.test(rest) && this.config.gameCodes) return;
+      // Único comando sin permiso: el código de la web demuestra de quién es la cuenta.
       if (!this.backend.link) throw ticketError('La integración con la web no está configurada.');
       const linked = await this.backend.link(jid, rest);
-      await reply(`Cuenta vinculada: ${linked.username}. Usa !ticket para abrir un caso.`);
+      let extra = '';
+      try {
+        const lp = await this.onLinked({ ids: senderIds, username: linked.username, minecraftUuid: linked.minecraftUuid });
+        if (lp.linked) extra = `\n🎮 Minecraft: ${lp.player.username} (${lp.player.primaryGroup}). Ya puedes usar los comandos de tu rango.`;
+        else if (lp.enabled) extra = `\n⚠️ ${linked.username} aún no ha entrado al servidor de Minecraft. Entra una vez y genera un código nuevo en la web para activar tu rango.`;
+      } catch (err) {
+        console.error('[Tickets] No se pudo guardar el vínculo en LuckPerms:', err.message);
+        extra = '\n⚠️ No se pudo activar tu rango ahora. Genera un código nuevo en la web más tarde o pide a un admin que use !mcvincular.';
+      }
+      await reply(`Cuenta vinculada: ${linked.username}. Usa !ticket para abrir un caso.${extra}`);
       return;
+    }
+    const perm = TICKET_PLAYER_PERMISSIONS[command];
+    if (perm) {
+      const lp = await this.permissions('whatsapp', senderIds, perm.node).catch(() => UNAVAILABLE);
+      const staff = senderIds.some((id) => (this.config.staffIds || []).includes(String(id).split('@')[0].split(':')[0]));
+      if (!decide(perm, lp, { staff })) { await reply(deniedText(lp)); return; }
     }
     if (command === 'cancelar') { this.wizards.delete(jid); await reply('Apertura cancelada.'); return; }
     if (command === 'tickets') {
@@ -312,7 +340,7 @@ export class TicketService {
       // Se consultan roles actuales, no los de una caché de interacciones anterior.
       const member = await interaction.guild.members.fetch(interaction.user.id);
       const byRole = member.permissions.has(PermissionFlagsBits.ManageGuild) || this.config.staffRoleIds.some((id) => member.roles.cache.has(id));
-      const byLuckPerms = await this.permissions(interaction.user.id, PERMISSIONS.ticketsStaff.node).catch(() => undefined);
+      const byLuckPerms = await this.permissions('discord', [interaction.user.id], PERMISSIONS.ticketsStaff.node).catch(() => UNAVAILABLE);
       if (!decide(PERMISSIONS.ticketsStaff, byLuckPerms, { fallback: byRole })) throw ticketError('Necesitas un rol de soporte.', 403);
       const route = await this.repository.routeByChannel(interaction.channelId);
       if (!route || !route.ticket_key.startsWith(`${this.backend.name}:`)) throw ticketError('Este canal no pertenece al modo de tickets activo.');

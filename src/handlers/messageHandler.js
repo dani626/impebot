@@ -5,8 +5,9 @@ import { extractWaText, parseWaTimestamp, normalizePresence, PRESENCE_TEXTS } fr
 import { parseCommand } from '../utils/commands.js';
 import { moderationService, MODERATION_COMMANDS, participantIds, userPart } from '../services/ModerationService.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
-import { decide, WHATSAPP_COMMAND_PERMISSIONS, whatsappSenderIds } from '../luckperms/permissions.js';
+import { decide, deniedText, WHATSAPP_COMMAND_PERMISSIONS, whatsappSenderIds } from '../luckperms/permissions.js';
 import { handleAccountCommand } from '../luckperms/accountCommands.js';
+import { gameLinkService, isGameCode } from '../luckperms/gameLink.js';
 import { commandLogService } from '../services/CommandLogService.js';
 
 /**
@@ -27,6 +28,12 @@ export async function handleMessage(sock, msg) {
 
     // Verificar si el mensaje corresponde a un comando válido del bot
     const parsed = parseCommand(text);
+
+    // Un código de /whatsapp link publicado en un grupo deja de valer (!vincular lo trata más abajo).
+    if (jid.endsWith('@g.us') && luckPermsService.enabled && !(parsed.isCommand && parsed.command === 'vincular')) {
+      await gameLinkService.burnLeaked({ sock, msg, jid, text })
+        .catch((err) => console.error('⚠️ [Vincular] No se pudo anular un código publicado:', err.message));
+    }
     if (!parsed.isCommand) return;
 
     const { prefix, command, invoked, args, restText } = parsed;
@@ -45,7 +52,8 @@ export async function handleMessage(sock, msg) {
     // La moderación hace su propia comprobación (también acepta administradores del grupo).
     let senderIds = whatsappSenderIds(msg);
     const perm = WHATSAPP_COMMAND_PERMISSIONS[command];
-    if (perm && jid.endsWith('@g.us') && (!perm.public || command === 'mc') && luckPermsService.enabled) {
+    const gameCode = command === 'vincular' && luckPermsService.enabled && isGameCode(args[0]);
+    if ((perm || gameCode) && jid.endsWith('@g.us') && luckPermsService.enabled) {
       // En grupos el mensaje puede traer solo el LID: se añade el número desde los participantes.
       const meta = await sock.groupMetadata(jid).catch(() => null);
       const wanted = new Set(senderIds.map(userPart));
@@ -54,11 +62,11 @@ export async function handleMessage(sock, msg) {
     }
     const isStaff = senderIds.some((id) => CONFIG.moderation.staff.includes(userPart(id)));
     if (perm && !MODERATION_COMMANDS.has(command)) {
-      const { result } = await luckPermsService.check('whatsapp', senderIds, perm.node);
-      if (!decide(perm, result, { staff: isStaff })) {
+      const lp = await luckPermsService.check('whatsapp', senderIds, perm.node);
+      if (!decide(perm, lp, { staff: isStaff })) {
         audit.status = 'denegado';
         audit.detail = `sin ${perm.node}`;
-        await sock.sendMessage(jid, { text: '⛔ No tienes permiso para usar este comando. / You do not have permission to use this command.' }, { quoted: msg });
+        await sock.sendMessage(jid, { text: deniedText(lp, prefix) }, { quoted: msg });
         return;
       }
     }
@@ -162,6 +170,21 @@ export async function handleMessage(sock, msg) {
         break;
       }
 
+      case 'vincular': {
+        // Código del juego (8 cifras, /whatsapp link). El de la web (32 caracteres) lo atienden los tickets.
+        if (!gameCode) break;
+        try {
+          const result = await gameLinkService.handleCommand({ sock, msg, jid, code: args[0], senderIds, prefix });
+          audit.status = result.status;
+          audit.detail = result.detail || null;
+        } catch (linkErr) {
+          audit.status = 'error';
+          audit.detail = linkErr.message;
+          await sock.sendMessage(jid, { text: '❌ No se pudo vincular ahora. Inténtalo más tarde. / Could not link right now.' }, { quoted: msg }).catch(() => {});
+        }
+        break;
+      }
+
       case 'mc':
       case 'mcvincular':
       case 'mcdesvincular': {
@@ -199,9 +222,10 @@ export async function handleMessage(sock, msg) {
           `• ${p}warns / ${p}advertencias [@usuario]\n` +
           `• ${p}unwarn / ${p}quitaradvertencia @usuario [all]\n\n` +
           (luckPermsService.enabled ? `🎮 *Minecraft:*\n` +
+          `• ${p}vincular / ${p}verificar / ${p}link / ${p}verify CODIGO : vincula tu cuenta, por privado (código de /whatsapp link en el juego o de la web)\n` +
           `• ${p}mc / ${p}minecraft : tu cuenta vinculada / your linked account\n` +
-          `• ${p}mcvincular / ${p}mclink Jugador @usuario (staff)\n` +
-          `• ${p}mcdesvincular / ${p}mcunlink Jugador (staff)\n\n` : '') +
+          `• ${p}forzarvinculo / ${p}forcelink Jugador @usuario (admin)\n` +
+          `• ${p}quitarvinculo / ${p}unlink Jugador|@usuario (admin)\n\n` : '') +
           `⚙️ *Estado / Status* (staff):\n` +
           `• ${p}presence / ${p}presencia [online|offline]\n` +
           `• ${p}online / ${p}enlinea · ${p}offline / ${p}desconectado\n` +

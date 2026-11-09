@@ -15,7 +15,7 @@ import spotifyUrlInfo from 'spotify-url-info';
 import { CONFIG } from '../config.js';
 import { ensureFfmpeg, ensureYtDlp } from '../utils/ensureBinaries.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
-import { decide, musicPermission } from '../luckperms/permissions.js';
+import { decide, musicPermission, UNAVAILABLE } from '../luckperms/permissions.js';
 
 const require = createRequire(import.meta.url);
 const spotify = spotifyUrlInfo(fetch);
@@ -250,9 +250,9 @@ class GuildMusicQueue {
 export class MusicService {
   /**
    * @param {{ discord: import('./DiscordService.js').DiscordService,
-   *   permissions?: (discordUserId: string, node: string) => Promise<true|false|undefined> }} deps
+   *   permissions?: (discordUserId: string, node: string) => Promise<{ result, available }> }} deps
    */
-  constructor({ discord, permissions = async (id, node) => (await luckPermsService.check('discord', [id], node)).result }) {
+  constructor({ discord, permissions = (id, node) => luckPermsService.check('discord', [id], node) }) {
     this.discord = discord;
     this.permissions = permissions;
     /** @type {Map<string, GuildMusicQueue>} */
@@ -460,11 +460,15 @@ export class MusicService {
     }
   }
 
-  /** Permiso de LuckPerms (impebot.music.*). Libre por defecto; solo un "false" explícito lo bloquea. */
+  /** Permiso de LuckPerms (impebot.music.*). Sin LuckPerms, libre para todos. */
   async allowed(interaction, name) {
     const perm = musicPermission(name);
-    const result = await this.permissions(interaction.user.id, perm.node).catch(() => undefined);
-    if (decide(perm, result)) return true;
+    const lp = await this.permissions(interaction.user.id, perm.node).catch(() => UNAVAILABLE);
+    if (decide(perm, lp)) return true;
+    if (lp.available && !lp.player) {
+      await interaction.reply({ content: '⛔ Tu cuenta de Discord no está vinculada a Minecraft. Escribe `/discord link` en el servidor de Minecraft y envía el código a DiscordSRV.', flags: 64 });
+      return false;
+    }
     await interaction.reply({ content: `⛔ No tienes permiso para esto (${perm.node}).`, flags: 64 });
     return false;
   }

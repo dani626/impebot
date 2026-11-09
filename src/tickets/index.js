@@ -6,6 +6,7 @@ import { whatsAppService } from '../services/WhatsAppService.js';
 import { discordService } from '../services/DiscordService.js';
 import { MessageTransformer } from '../relay/MessageTransformer.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
+import { linkVerifiedAccount } from '../luckperms/accountCommands.js';
 
 // Una configuración incompleta nunca cambia silenciosamente a tickets locales.
 const backend = CONFIG.tickets.enabled && (CONFIG.tickets.web.url || CONFIG.tickets.web.token)
@@ -13,7 +14,8 @@ const backend = CONFIG.tickets.enabled && (CONFIG.tickets.web.url || CONFIG.tick
 
 export const ticketService = new TicketService({
   backend, repository: ticketRepository, whatsapp: whatsAppService, discord: discordService,
-  config: { ...CONFIG.tickets, guildId: CONFIG.discord.guildId },
+  config: { ...CONFIG.tickets, guildId: CONFIG.discord.guildId, staffIds: CONFIG.moderation.staff, gameCodes: CONFIG.luckperms.enabled },
   transformMedia: (data) => MessageTransformer.toDiscord(data),
-  permissions: async (id, node) => (await luckPermsService.check('discord', [id], node)).result,
+  permissions: (platform, ids, node) => luckPermsService.check(platform, ids, node),
+  onLinked: (account) => linkVerifiedAccount(account),
 });

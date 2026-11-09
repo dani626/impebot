@@ -540,7 +540,7 @@ export class WhatsAppService extends EventEmitter {
     // Determinar tipo de contenido / multimedia
     const msgType = Object.keys(msg.message)[0] || 'desconocido';
     const chatType = jid?.endsWith('@g.us') ? 'GRUPO' : (jid?.endsWith('@lid') ? 'DIRECTO/LID' : 'DIRECTO');
-    const previewText = /^[!/.]vincular\b/i.test(text || '') ? '[Código de vinculación oculto]' : text ? `"${text.length > 80 ? text.substring(0, 77) + '...' : text}"` : `[${msgType}]`;
+    const previewText = /^[!/.](vincular|link|verificar|verify)\b/i.test(text || '') ? '[Código de vinculación oculto]' : text ? `"${text.length > 80 ? text.substring(0, 77) + '...' : text}"` : `[${msgType}]`;
     const originTag = isFromMe ? '🤖 [BOT/PROPIO]' : '👤 [USUARIO]';
     const delayTag = isDelayed ? ' ⏳ [SINCRONIZADO/OFFLINE]' : '';
 

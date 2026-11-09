@@ -4,17 +4,32 @@ import { getContextInfo } from '../utils/whatsappMessage.js';
 import { participantIds, userPart } from '../services/ModerationService.js';
 
 /**
- * Comandos de WhatsApp para la cuenta de Minecraft:
- *  !mc                           → muestra a qué jugador está vinculado quien escribe
- *  !mcvincular <jugador> @usuario|número|respuesta   (permiso impebot.link)
- *  !mcdesvincular <jugador>      (permiso impebot.link)
+ * Cuenta de Minecraft en WhatsApp. El vínculo se guarda como meta de LuckPerms
+ * (`meta.whatsapp.<número>`) y se avisa a toda la red.
  *
- * El vínculo se guarda como meta de LuckPerms (`meta.whatsapp.<número>`) y se avisa a toda la red.
- * Vincularse a uno mismo no está permitido (salvo WA_STAFF_IDS): cualquiera con impebot.link
- * podría apropiarse de la cuenta del dueño del servidor.
+ *  !vincular / !verificar / !link / !verify CODIGO  → el propio jugador, con el código de la web
+ *                                                     (TicketService → linkVerifiedAccount)
+ *  !mc                                              → a qué jugador estás vinculado
+ *  !mcvincular Jugador @usuario|número|respuesta    → admin: fuerza el vínculo (impebot.link.admin)
+ *  !mcdesvincular Jugador | @usuario | número       → admin: quita el vínculo (impebot.link.admin)
+ *
+ * Un admin no puede forzar su propio vínculo (salvo WA_STAFF_IDS): para eso está !vincular,
+ * que demuestra con la web que la cuenta es suya.
  */
 
 const norm = (jid) => String(jid).replace(/:\d+@/, '@');
+
+/**
+ * Vincula al jugador verificado por la web (su nick de Minecraft) con quien envió el código.
+ * @returns {Promise<{ enabled: boolean, player: object|null, linked: boolean }>}
+ */
+export async function linkVerifiedAccount({ ids, username, minecraftUuid }, lp = luckPermsService) {
+  if (!lp.enabled) return { enabled: false, player: null, linked: false };
+  const player = (minecraftUuid && await lp.findPlayerByName(minecraftUuid)) || await lp.findPlayerByName(username);
+  if (!player) return { enabled: true, player: null, linked: false };
+  await lp.link(player.uuid, 'whatsapp', ids);
+  return { enabled: true, player, linked: true };
+}
 
 /** Identificadores (número y LID) de la persona señalada por mención, respuesta o número escrito. */
 async function targetIds(sock, msg, args) {
@@ -33,6 +48,7 @@ async function targetIds(sock, msg, args) {
 }
 
 const shown = (ids) => ids.filter((id) => !String(id).endsWith('@lid')).map((id) => `+${digitsOf(id)}`).join(', ') || 'LID';
+const playerArg = (args) => args.find((a) => /^[A-Za-z0-9_]{3,16}$/.test(a) && !digitsOf(a)) || args.find((a) => /^[0-9a-f-]{36}$/i.test(a));
 
 export async function handleAccountCommand({ sock, msg, command, args, prefix, senderIds, isStaff = false }) {
   const jid = msg.key.remoteJid;
@@ -46,7 +62,7 @@ export async function handleAccountCommand({ sock, msg, command, args, prefix, s
   if (command === 'mc') {
     const player = await luckPermsService.findPlayer('whatsapp', senderIds);
     if (!player) {
-      await reply('🎮 Tu WhatsApp no está vinculado a ninguna cuenta de Minecraft. Pide a un miembro del staff que lo vincule. / Your WhatsApp is not linked to a Minecraft account. Ask a staff member to link it.');
+      await reply(`🎮 Tu WhatsApp no está vinculado a ninguna cuenta de Minecraft. Escribe /whatsapp link en el juego y envíame \`${prefix}vincular CODIGO\` por privado. / Not linked: send \`${prefix}link CODE\` in private.`);
       return { status: 'ok', detail: 'sin vincular' };
     }
     const { groups } = await luckPermsService.loadUser(player.uuid);
@@ -54,10 +70,34 @@ export async function handleAccountCommand({ sock, msg, command, args, prefix, s
     return { status: 'ok', detail: player.username };
   }
 
-  const name = args.find((a) => /^[A-Za-z0-9_]{3,16}$/.test(a) && !digitsOf(a)) || args.find((a) => /^[0-9a-f-]{36}$/i.test(a));
-  const usage = command === 'mcvincular'
-    ? `⚠️ Uso: \`${prefix}mcvincular Jugador @usuario\` (o responde a su mensaje, o escribe su número). / Usage: \`${prefix}mclink Player @user\`.`
-    : `⚠️ Uso: \`${prefix}mcdesvincular Jugador\`. / Usage: \`${prefix}mcunlink Player\`.`;
+  const name = playerArg(args);
+
+  if (command === 'mcdesvincular') {
+    let player = name ? await luckPermsService.findPlayerByName(name) : null;
+    if (!name) {
+      const ids = await targetIds(sock, msg, args);
+      player = ids.length ? await luckPermsService.findPlayer('whatsapp', ids) : null;
+      if (!ids.length) {
+        await reply(`⚠️ Uso: \`${prefix}mcdesvincular Jugador\` o \`${prefix}mcdesvincular @usuario\`. / Usage: \`${prefix}mcunlink Player|@user\`.`);
+        return { status: 'uso', detail: 'sin objetivo' };
+      }
+      if (!player) {
+        await reply('ℹ️ Esa persona no está vinculada a ninguna cuenta. / That person is not linked.');
+        return { status: 'ok', detail: 'no vinculado' };
+      }
+    } else if (!player) {
+      await reply(`❌ No existe el jugador *${name}* en LuckPerms. / Player not found.`);
+      return { status: 'error', detail: `jugador ${name} no existe` };
+    }
+    const removed = await luckPermsService.unlink(player.uuid, 'whatsapp');
+    await reply(removed
+      ? `✅ *${player.username}* ya no está vinculado a WhatsApp. / unlinked.`
+      : `ℹ️ *${player.username}* no tenía WhatsApp vinculado. / was not linked.`);
+    return { status: 'ok', detail: `desvinculado ${player.username} (${removed})` };
+  }
+
+  // mcvincular: forzar
+  const usage = `⚠️ Uso: \`${prefix}mcvincular Jugador @usuario\` (o responde a su mensaje, o escribe su número). / Usage: \`${prefix}forcelink Player @user\`.`;
   if (!name) {
     await reply(usage);
     return { status: 'uso', detail: 'sin jugador' };
@@ -67,26 +107,18 @@ export async function handleAccountCommand({ sock, msg, command, args, prefix, s
     await reply(`❌ No existe el jugador *${name}* en LuckPerms (debe haber entrado al servidor al menos una vez). / Player not found.`);
     return { status: 'error', detail: `jugador ${name} no existe` };
   }
-
-  if (command === 'mcdesvincular') {
-    const removed = await luckPermsService.unlink(player.uuid, 'whatsapp');
-    await reply(removed
-      ? `✅ *${player.username}* ya no está vinculado a WhatsApp. / unlinked.`
-      : `ℹ️ *${player.username}* no tenía WhatsApp vinculado. / was not linked.`);
-    return { status: 'ok', detail: `desvinculado ${player.username} (${removed})` };
-  }
-
   const ids = await targetIds(sock, msg, args.filter((a) => a !== name));
   if (!ids.length) {
     await reply(usage);
     return { status: 'uso', detail: 'sin persona' };
   }
-  // Solo WA_STAFF_IDS puede vincularse a sí mismo (el resto, a través de otra persona del staff).
   if (!isStaff && ids.some((id) => senderIds.some((s) => userPart(s) === userPart(id)))) {
-    await reply('⚠️ No puedes vincular tu propio WhatsApp. Pídeselo a otro miembro del staff. / You cannot link yourself.');
+    await reply(`⚠️ No puedes forzar tu propio vínculo. Usa \`${prefix}vincular CODIGO\` con el código de la web. / Use \`${prefix}link CODE\` instead.`);
     return { status: 'denegado', detail: 'autovinculación' };
   }
+  const previous = await luckPermsService.findPlayer('whatsapp', ids);
   await luckPermsService.link(player.uuid, 'whatsapp', ids);
-  await reply(`✅ WhatsApp ${shown(ids)} vinculado a *${player.username}* (${player.primaryGroup}). / linked.`);
-  return { status: 'ok', detail: `vinculado ${player.username}` };
+  const moved = previous && previous.uuid !== player.uuid ? ` (antes: ${previous.username})` : '';
+  await reply(`✅ WhatsApp ${shown(ids)} vinculado a *${player.username}* (${player.primaryGroup})${moved}. / linked.`);
+  return { status: 'ok', detail: `vinculado ${player.username}${moved}` };
 }

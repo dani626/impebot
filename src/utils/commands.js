@@ -20,7 +20,7 @@ export const COMMAND_ALIASES = {
   tickets: ['mytickets', 'mistickets'],
   responder: ['reply'],
   cerrar: ['close'],
-  vincular: ['link'],
+  vincular: ['link', 'verificar', 'verify'],
   cancelar: ['cancel'],
   // Moderación de grupos
   borrar: ['delete', 'del', 'eliminar'],
@@ -33,8 +33,8 @@ export const COMMAND_ALIASES = {
   unwarn: ['quitaradvertencia', 'desadvertir'],
   // Cuenta de Minecraft (LuckPerms)
   mc: ['minecraft', 'micuenta'],
-  mcvincular: ['mclink', 'vincularmc'],
-  mcdesvincular: ['mcunlink', 'desvincularmc'],
+  mcvincular: ['mclink', 'vincularmc', 'forzarvinculo', 'forcelink'],
+  mcdesvincular: ['mcunlink', 'desvincularmc', 'quitarvinculo', 'unlink'],
 };
 
 /** alias o nombre canónico → nombre canónico */

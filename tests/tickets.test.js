@@ -261,3 +261,36 @@ test('una notificación de cierre pendiente no repite avisos en Discord', async 
   assert.equal(f.state.dc.length, count);
   assert.equal(f.state.wa.length, 1);
 });
+
+test('con LuckPerms, !vincular no exige permiso y activa el rango; !ticket sí lo exige', async () => {
+  const f = fixture();
+  const linkedAccounts = [];
+  let linkedPlayer = null;
+  f.backend.link = async (who, code) => { f.state.mutations.push({ action: 'link', who, code }); return { username: 'Steve' }; };
+  f.service.permissions = async (platform, ids, node) => ({ available: true, player: linkedPlayer, result: linkedPlayer ? node === 'impebot.tickets.use' : undefined });
+  f.service.onLinked = async (account) => {
+    linkedAccounts.push(account);
+    linkedPlayer = { uuid: 'u', username: 'steve', primaryGroup: 'vip' };
+    return { enabled: true, linked: true, player: linkedPlayer };
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const send = (text, id) => f.service.processWhatsApp({ jid, text, messageId: id, timestamp: now, rawMessage: { key: { remoteJid: jid, id } } });
+
+  await send('!ticket', 'm1');
+  assert.match(f.state.wa.at(-1).text, /vincular CODIGO/, 'sin vincular no puede abrir tickets');
+  assert.equal(f.service.wizards.size, 0);
+
+  await send('!verificar 0123456789abcdef0123456789abcdef', 'm2');
+  assert.deepEqual(linkedAccounts[0], { ids: [jid], username: 'Steve', minecraftUuid: undefined });
+  assert.match(f.state.wa.at(-1).text, /Minecraft: steve \(vip\)/);
+
+  await send('!ticket', 'm3');
+  assert.equal(f.service.wizards.has(jid), true, 'ya vinculado y con permiso abre el asistente');
+
+  // El código del juego (8 cifras) lo atiende gameLink.js, no la web.
+  f.service.config.gameCodes = true;
+  const replies = f.state.wa.length;
+  await send('!vincular 12345678', 'm4');
+  assert.equal(f.state.mutations.filter((m) => m.action === 'link').length, 1, 'no llega a la web');
+  assert.equal(f.state.wa.length, replies, 'ni responde: lo hace el manejador de comandos');
+});

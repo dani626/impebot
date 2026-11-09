@@ -3,6 +3,8 @@ import { CONFIG } from '../config.js';
 import { discordService, NO_MENTIONS } from '../services/DiscordService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { mirrorRepository, aliasRepository, ALL_CHATS } from '../database/repositories/MirrorRepository.js';
+import { luckPermsService } from '../luckperms/LuckPermsService.js';
+import { decide, PERMISSIONS } from '../luckperms/permissions.js';
 
 export function mirrorCommands() {
   const chat = (o) => o.setName('chat').setDescription('Alias, JID del chat de WhatsApp o "todos". Por defecto: el chat de este canal').setMaxLength(128).setAutocomplete(true);
@@ -123,6 +125,12 @@ export class MirrorService {
 
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
       await interaction.editReply('Necesitas el permiso Gestionar servidor.');
+      return;
+    }
+    // Con LuckPerms disponible, además hace falta impebot.relay.mirror.
+    const lp = await luckPermsService.check('discord', [interaction.user.id], PERMISSIONS.mirror.node);
+    if (!decide(PERMISSIONS.mirror, lp, { fallback: true })) {
+      await interaction.editReply(`⛔ Necesitas el permiso ${PERMISSIONS.mirror.node}.`);
       return;
     }
 

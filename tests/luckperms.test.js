@@ -4,7 +4,9 @@ import {
   buildPermissionMap, checkPermission, digitsOf, encodeMessengerMessage, indexGroups, isNodeActive, metaNode,
 } from '../src/luckperms/resolver.js';
 import { LuckPermsService } from '../src/luckperms/LuckPermsService.js';
-import { decide, whatsappSenderIds, PERMISSIONS } from '../src/luckperms/permissions.js';
+import { decide, deniedText, whatsappSenderIds, PERMISSIONS } from '../src/luckperms/permissions.js';
+import { linkVerifiedAccount } from '../src/luckperms/accountCommands.js';
+import { parseCommand } from '../src/utils/commands.js';
 import { ModerationService } from '../src/services/ModerationService.js';
 
 const node = (permission, extra = {}) => ({ permission, value: 1, server: 'global', world: 'global', expiry: 0, contexts: '{}', ...extra });
@@ -84,14 +86,30 @@ test('formato de meta y de avisos del messaging service', () => {
   assert.deepEqual(JSON.parse(encodeMessengerMessage('abc', 'update')), { id: 'abc', type: 'update' });
 });
 
-test('decide(): staff de emergencia, LuckPerms y reglas de respaldo', () => {
-  assert.equal(decide(PERMISSIONS.presence, undefined), false);
-  assert.equal(decide(PERMISSIONS.presence, true), true);
-  assert.equal(decide(PERMISSIONS.presence, false, { staff: true }), true);
-  assert.equal(decide(PERMISSIONS.sticker, undefined), true);
-  assert.equal(decide(PERMISSIONS.sticker, false), false);
-  assert.equal(decide(PERMISSIONS.moderationBan, undefined, { fallback: true }), true);
-  assert.equal(decide(PERMISSIONS.moderationBan, false, { fallback: true }), false);
+test('con LuckPerms disponible todo comando exige su permiso en true', () => {
+  const on = (result, player = { uuid: 'u' }) => ({ available: true, result, player });
+  assert.equal(decide(PERMISSIONS.sticker, on(true)), true);
+  assert.equal(decide(PERMISSIONS.sticker, on(undefined)), false, 'sin permiso explícito no hay acceso');
+  assert.equal(decide(PERMISSIONS.sticker, on(undefined, null)), false, 'sin vincular tampoco');
+  assert.equal(decide(PERMISSIONS.moderationBan, on(undefined), { fallback: true }), false, 'ser admin del grupo no basta');
+  assert.equal(decide(PERMISSIONS.presence, on(false), { staff: true }), true, 'WA_STAFF_IDS siempre puede');
+  assert.match(deniedText(on(undefined, null)), /vincular CODIGO/);
+  assert.match(deniedText(on(false)), /No tienes permiso/);
+});
+
+test('sin LuckPerms (o caído) se usan las reglas de antes', () => {
+  const off = { available: false, result: undefined, player: null };
+  assert.equal(decide(PERMISSIONS.sticker, off), true);
+  assert.equal(decide(PERMISSIONS.musicPlay, off), true);
+  assert.equal(decide(PERMISSIONS.presence, off), false);
+  assert.equal(decide(PERMISSIONS.moderationBan, off, { fallback: true }), true);
+  assert.equal(decide(PERMISSIONS.ticketsStaff, undefined, { fallback: true }), true);
+});
+
+test('alias de vinculación', () => {
+  for (const word of ['vincular', 'link', 'verificar', 'verify']) assert.equal(parseCommand(`!${word} abc`).command, 'vincular');
+  for (const word of ['forzarvinculo', 'forcelink', 'mcvincular']) assert.equal(parseCommand(`!${word} Steve`).command, 'mcvincular');
+  for (const word of ['quitarvinculo', 'unlink', 'mcdesvincular']) assert.equal(parseCommand(`!${word} Steve`).command, 'mcdesvincular');
 });
 
 test('identificadores del remitente en grupo y en privado', () => {
@@ -163,8 +181,9 @@ test('reconoce al jugador por su número (o LID) y calcula su permiso', async ()
   const res = await lp.check('whatsapp', ['51987654321@s.whatsapp.net', '777@lid'], 'impebot.moderation.ban');
   assert.equal(res.result, true);
   assert.equal(res.player.username, 'steve');
+  assert.equal(res.available, true);
   const stranger = await lp.check('whatsapp', ['5100000000@s.whatsapp.net'], 'impebot.moderation.ban');
-  assert.deepEqual(stranger, { result: undefined, player: null });
+  assert.deepEqual(stranger, { result: undefined, player: null, available: true });
 });
 
 test('usa caché y la borra al recibir un aviso de la red', async () => {
@@ -214,7 +233,7 @@ test('vincular guarda la meta, se la quita a otro jugador y avisa a la red', asy
 
 test('si LuckPerms está desactivado o caído, check() no lanza', async () => {
   const off = new LuckPermsService({ config: { enabled: false, tablePrefix: 'luckperms_' } });
-  assert.deepEqual(await off.check('whatsapp', ['519'], 'x'), { result: undefined, player: null });
+  assert.deepEqual(await off.check('whatsapp', ['519'], 'x'), { result: undefined, player: null, available: false });
 
   const broken = { query: async () => { throw new Error('ECONNREFUSED'); }, end: async () => {} };
   const { lp } = service(null, broken);
@@ -222,7 +241,7 @@ test('si LuckPerms está desactivado o caído, check() no lanza', async () => {
   console.error = () => {};
   try {
     await lp.start();
-    assert.deepEqual(await lp.check('whatsapp', ['51987654321'], 'x'), { result: undefined, player: null });
+    assert.deepEqual(await lp.check('whatsapp', ['51987654321'], 'x'), { result: undefined, player: null, available: false });
   } finally {
     console.error = original;
   }
@@ -235,6 +254,7 @@ test('el prefijo de tablas no admite inyección SQL', () => {
 // ---------------------------------------------------------------- moderación con LuckPerms
 
 const GROUP = '120363000000000001@g.us';
+const lpOn = (result) => ({ available: true, result, player: { uuid: 'u' } });
 function moderation(permissions) {
   const sent = [];
   const sock = {
@@ -266,22 +286,83 @@ test('un miembro con impebot.moderation.ban en LuckPerms puede banear', async ()
   const asked = [];
   const { ban } = moderation(async (ids, n) => {
     asked.push([ids, n]);
-    return n === 'impebot.moderation.ban' && ids.includes('56922222222@s.whatsapp.net') ? true : undefined;
+    return lpOn(n === 'impebot.moderation.ban' && ids.includes('56922222222@s.whatsapp.net') ? true : undefined);
   });
   assert.equal((await ban('222', '333')).status, 'ok');
   assert.ok(asked[0][0].includes('56922222222@s.whatsapp.net'), 'se consulta también el número, no solo el LID');
 });
 
-test('un admin del grupo con el permiso negado en LuckPerms no puede banear', async () => {
-  const { ban } = moderation(async (ids, n) => (n === 'impebot.moderation.ban' ? false : undefined));
-  assert.equal((await ban('111', '333')).status, 'denegado');
+test('con LuckPerms, un admin del grupo sin el permiso no puede banear', async () => {
+  assert.equal((await moderation(async () => lpOn(undefined)).ban('111', '333')).status, 'denegado');
+  assert.equal((await moderation(async () => lpOn(false)).ban('111', '333')).status, 'denegado');
+});
+
+test('si LuckPerms no responde, los admins del grupo siguen moderando', async () => {
+  const { ban } = moderation(async () => ({ available: false, result: undefined, player: null }));
+  assert.equal((await ban('111', '333')).status, 'ok');
+  assert.equal((await moderation(async () => ({ available: false })).ban('222', '333')).status, 'denegado');
 });
 
 test('impebot.moderation.exempt protege al objetivo', async () => {
   const { ban, sent } = moderation(async (ids, n) => {
-    if (n === 'impebot.moderation.exempt') return ids.includes('333@lid');
-    return undefined;
+    if (n === 'impebot.moderation.exempt') return lpOn(ids.includes('333@lid') || undefined);
+    return lpOn(true);
   });
   assert.equal((await ban('111', '333')).status, 'denegado');
   assert.match(sent.at(-1).text, /administrador ni al staff/);
+});
+
+test('!vincular con código de la web guarda el número en el jugador de ese nick', async () => {
+  const { db, pool } = fakeDb();
+  const { lp } = service(db, pool);
+  await lp.start();
+  const res = await linkVerifiedAccount({ ids: ['51900000001@s.whatsapp.net', '88812345678@lid'], username: 'Alex' }, lp);
+  assert.equal(res.linked, true);
+  assert.equal(res.player.username, 'alex');
+  assert.ok(db.users.some((u) => u.uuid === OTHER && u.permission === 'meta.whatsapp.51900000001'));
+  assert.ok(db.users.some((u) => u.uuid === OTHER && u.permission === 'meta.whatsapp.88812345678'));
+
+  const missing = await linkVerifiedAccount({ ids: ['51900000002'], username: 'NuncaEntro' }, lp);
+  assert.deepEqual(missing, { enabled: true, player: null, linked: false });
+  const disabled = await linkVerifiedAccount({ ids: ['1'], username: 'x' }, { enabled: false });
+  assert.equal(disabled.enabled, false);
+});
+
+test('Discord: usa el vínculo de DiscordSRV si no hay uno forzado en LuckPerms', async () => {
+  const { db, pool } = fakeDb();
+  const dsrvQueries = [];
+  const dsrvPool = {
+    query: async (sql, params) => {
+      dsrvQueries.push(sql);
+      if (sql.startsWith('SELECT COUNT')) return [{ n: 1 }];
+      return params.includes('200000000000000001') ? [{ uuid: OTHER }] : [];
+    },
+    end: async () => {},
+  };
+  const pools = [pool, dsrvPool];
+  const lp = new LuckPermsService({
+    config: {
+      enabled: true, db: {}, tablePrefix: 'luckperms_', servers: [], cacheTtlMs: 60000, pollIntervalMs: 0,
+      metaKeys: { whatsapp: 'whatsapp', discord: 'discord' },
+      discordsrv: { enabled: true, db: { database: 'discordsrvsurvivalop' }, tablePrefix: 'discordsrv' },
+    },
+    createPool: () => pools.shift(),
+  });
+  const original = console.log;
+  console.log = () => {};
+  try { await lp.start(); } finally { console.log = original; }
+
+  const viaDsrv = await lp.findPlayer('discord', ['200000000000000001']);
+  assert.deepEqual(viaDsrv, { uuid: OTHER, username: 'alex', primaryGroup: 'default', source: 'discordsrv' });
+  assert.match(dsrvQueries.at(-1), /FROM `discordsrv_accounts` WHERE `discord` IN/);
+  assert.equal(await lp.findPlayer('discord', ['200000000000000009']), null);
+
+  // Un admin fuerza otro jugador con /minecraft vincular: la meta de LuckPerms manda.
+  db.users.push({ uuid: UUID, ...node('meta.discord.200000000000000001') });
+  lp.clearCache();
+  assert.equal((await lp.findPlayer('discord', ['200000000000000001'])).username, 'steve');
+  // WhatsApp nunca consulta DiscordSRV.
+  const before = dsrvQueries.length;
+  await lp.findPlayer('whatsapp', ['51900000099']);
+  assert.equal(dsrvQueries.length, before);
 });

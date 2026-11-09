@@ -114,7 +114,28 @@ export const CONFIG = {
     // Cada cuánto se leen los avisos de luckperms_messenger (0 = no escuchar)
     pollIntervalMs: Number.isNaN(parseInt(process.env.LUCKPERMS_POLL_MS, 10)) ? 1000 : parseInt(process.env.LUCKPERMS_POLL_MS, 10),
     // Meta de LuckPerms donde se guarda la cuenta de cada plataforma (/lp user X meta set whatsapp 519...)
-    metaKeys: { whatsapp: 'whatsapp', discord: 'discord' },
+    // code: códigos temporales de /whatsapp link (plugin ImpeGeo en el proxy)
+    metaKeys: { whatsapp: 'whatsapp', discord: 'discord', code: 'impebotcode' },
+    // Vincular con el código del juego (!vincular 12345678)
+    gameLink: {
+      // Grupos donde se acepta (JIDs ...@g.us separados por coma). Vacío = solo por privado.
+      groups: (process.env.WA_LINK_GROUPS || '').split(',').map((g) => g.trim()).filter(Boolean),
+      // Códigos incorrectos permitidos por persona y hora
+      maxFailures: Math.max(1, parseInt(process.env.WA_LINK_MAX_FAILURES, 10) || 5),
+      failureWindowMs: 60 * 60 * 1000,
+    },
+    // Vínculos Discord ↔ Minecraft hechos con DiscordSRV (/discord link), en su backend MySQL
+    discordsrv: {
+      enabled: process.env.DISCORDSRV_LINKS_ENABLED === 'true',
+      db: {
+        host: process.env.DISCORDSRV_DB_HOST || process.env.LUCKPERMS_DB_HOST || 'localhost',
+        port: parseInt(process.env.DISCORDSRV_DB_PORT || process.env.LUCKPERMS_DB_PORT, 10) || 3306,
+        user: process.env.DISCORDSRV_DB_USER || '',
+        password: process.env.DISCORDSRV_DB_PASSWORD || '',
+        database: process.env.DISCORDSRV_DB_NAME || 'discordsrv',
+      },
+      tablePrefix: process.env.DISCORDSRV_TABLE_PREFIX || 'discordsrv',
+    },
   },
 
   // Configuración de Catbox para subida y reproducción de videos

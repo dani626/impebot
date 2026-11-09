@@ -5,8 +5,9 @@ import { decide, PERMISSIONS } from './permissions.js';
 
 /**
  * /minecraft info [usuario]              → cuenta vinculada (cualquiera)
- * /minecraft vincular jugador usuario    → guarda meta.discord.<id> (impebot.link o Gestionar servidor)
- * /minecraft desvincular jugador         → quita el vínculo de Discord
+ * /minecraft vincular jugador usuario    → admin: fuerza meta.discord.<id> (impebot.link.admin)
+ * /minecraft desvincular jugador|usuario → admin: quita el vínculo de Discord (impebot.link.admin)
+ * Sin LuckPerms disponible, Gestionar servidor sirve de respaldo.
  */
 export function minecraftCommands() {
   const jugador = (o) => o.setName('jugador').setDescription('Nombre del jugador en Minecraft').setRequired(true).setMinLength(3).setMaxLength(36);
@@ -17,8 +18,9 @@ export function minecraftCommands() {
       .addSubcommand((s) => s.setName('vincular').setDescription('Vincular una cuenta de Discord a un jugador (staff)')
         .addStringOption(jugador)
         .addUserOption((o) => o.setName('usuario').setDescription('Cuenta de Discord').setRequired(true)))
-      .addSubcommand((s) => s.setName('desvincular').setDescription('Quitar el vínculo de Discord de un jugador (staff)')
-        .addStringOption(jugador)),
+      .addSubcommand((s) => s.setName('desvincular').setDescription('Quitar el vínculo de Discord (staff)')
+        .addStringOption((o) => o.setName('jugador').setDescription('Nombre del jugador en Minecraft').setMinLength(3).setMaxLength(36))
+        .addUserOption((o) => o.setName('usuario').setDescription('O la cuenta de Discord vinculada'))),
   ].map((c) => c.toJSON());
 }
 
@@ -50,6 +52,13 @@ export class MinecraftDiscordCommands {
     try {
       const sub = interaction.options.getSubcommand();
       if (sub === 'info') {
+        const own = await this.lp.check('discord', [interaction.user.id], PERMISSIONS.account.node);
+        if (!decide(PERMISSIONS.account, own)) {
+          await interaction.editReply(own.available && !own.player
+            ? 'Tu cuenta de Discord no está vinculada a Minecraft. Escribe `/discord link` en el servidor de Minecraft y envía el código a DiscordSRV.'
+            : `⛔ Necesitas el permiso ${PERMISSIONS.account.node}.`);
+          return;
+        }
         const user = interaction.options.getUser('usuario') || interaction.user;
         const player = await this.lp.findPlayer('discord', [user.id]);
         if (!player) {
@@ -62,9 +71,26 @@ export class MinecraftDiscordCommands {
       }
 
       const manageGuild = Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
-      const { result } = await this.lp.check('discord', [interaction.user.id], PERMISSIONS.link.node);
-      if (!decide(PERMISSIONS.link, result, { fallback: manageGuild })) {
-        await interaction.editReply(`⛔ Necesitas el permiso ${PERMISSIONS.link.node} o Gestionar servidor.`);
+      const lp = await this.lp.check('discord', [interaction.user.id], PERMISSIONS.linkAdmin.node);
+      if (!decide(PERMISSIONS.linkAdmin, lp, { fallback: manageGuild })) {
+        await interaction.editReply(`⛔ Necesitas el permiso ${PERMISSIONS.linkAdmin.node}.`);
+        return;
+      }
+
+      if (sub === 'desvincular') {
+        const name = interaction.options.getString('jugador');
+        const target = interaction.options.getUser('usuario');
+        const player = name ? await this.lp.findPlayerByName(name) : target ? await this.lp.findPlayer('discord', [target.id]) : null;
+        if (!name && !target) {
+          await interaction.editReply('Indica el jugador o el usuario de Discord.');
+          return;
+        }
+        if (!player) {
+          await interaction.editReply(name ? `❌ No existe el jugador **${name}** en LuckPerms.` : `ℹ️ <@${target.id}> no está vinculado.`);
+          return;
+        }
+        const removed = await this.lp.unlink(player.uuid, 'discord');
+        await interaction.editReply(removed ? `✅ **${player.username}** ya no está vinculado a Discord.` : `ℹ️ **${player.username}** no tenía Discord vinculado.`);
         return;
       }
 
@@ -72,12 +98,6 @@ export class MinecraftDiscordCommands {
       const player = await this.lp.findPlayerByName(name);
       if (!player) {
         await interaction.editReply(`❌ No existe el jugador **${name}** en LuckPerms (debe haber entrado al servidor al menos una vez).`);
-        return;
-      }
-
-      if (sub === 'desvincular') {
-        const removed = await this.lp.unlink(player.uuid, 'discord');
-        await interaction.editReply(removed ? `✅ **${player.username}** ya no está vinculado a Discord.` : `ℹ️ **${player.username}** no tenía Discord vinculado.`);
         return;
       }
 

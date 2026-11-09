@@ -36,6 +36,11 @@ export class LuckPermsService {
     const prefix = String(config?.tablePrefix || 'luckperms_');
     if (!/^[A-Za-z0-9_]+$/.test(prefix)) throw new Error('LUCKPERMS_TABLE_PREFIX solo admite letras, números y _.');
     this.t = (name) => `\`${prefix}${name}\``;
+    // Vínculos Discord ↔ Minecraft de DiscordSRV (tabla <prefijo>_accounts), opcional.
+    this.dsrvPool = null;
+    const dsrvPrefix = String(config?.discordsrv?.tablePrefix || 'discordsrv');
+    if (!/^[A-Za-z0-9_]+$/.test(dsrvPrefix)) throw new Error('DISCORDSRV_TABLE_PREFIX solo admite letras, números y _.');
+    this.dsrvAccounts = `\`${dsrvPrefix}_accounts\``;
   }
 
   get enabled() {
@@ -62,6 +67,19 @@ export class LuckPermsService {
       // Sin LuckPerms el bot sigue funcionando con las reglas de siempre (WA_STAFF_IDS, admins).
       console.error(`❌ [LuckPerms] No se pudo conectar: ${err.message}. Se usarán los permisos por defecto.`);
     }
+    const dsrv = this.config.discordsrv;
+    if (dsrv?.enabled) {
+      this.dsrvPool = this.createPool({
+        host: dsrv.db.host, port: dsrv.db.port, user: dsrv.db.user, password: dsrv.db.password, database: dsrv.db.database,
+        connectionLimit: 2, acquireTimeout: 5000, connectTimeout: 5000,
+      });
+      try {
+        const [row] = await this.dsrvPool.query(`SELECT COUNT(*) AS n FROM ${this.dsrvAccounts}`);
+        console.log(`✅ [LuckPerms] Vínculos de DiscordSRV: ${Number(row?.n) || 0} cuentas (${dsrv.db.database}).`);
+      } catch (err) {
+        console.error(`❌ [LuckPerms] No se pudo leer DiscordSRV: ${err.message}. Solo se usarán vínculos de LuckPerms.`);
+      }
+    }
     if (this.config.pollIntervalMs > 0) {
       this.pollTimer = setInterval(() => void this.pollMessenger(), this.config.pollIntervalMs);
       this.pollTimer.unref?.();
@@ -71,10 +89,11 @@ export class LuckPermsService {
   async stop() {
     clearInterval(this.pollTimer);
     this.pollTimer = null;
-    const pool = this.pool;
+    const pools = [this.pool, this.dsrvPool];
     this.pool = null;
+    this.dsrvPool = null;
     this.ready = false;
-    await pool?.end().catch(() => {});
+    await Promise.all(pools.map((p) => p?.end().catch(() => {})));
   }
 
   async query(sql, params = []) {
@@ -112,6 +131,8 @@ export class LuckPermsService {
         this.handleMessage(row.msg);
       }
     } catch (err) {
+      // Mientras no responda, se usan las reglas por defecto en vez de dejar a todos sin permisos.
+      this.ready = false;
       if (this.now() - this.lastPollError > 60000) {
         this.lastPollError = this.now();
         console.error(`⚠️ [LuckPerms] Error leyendo luckperms_messenger: ${err.message}`);
@@ -179,9 +200,23 @@ export class LuckPermsService {
       console.warn(`⚠️ [LuckPerms] ${platform} ${values.join('/')} está vinculado a varios jugadores (${matches.map((m) => m.username || m.uuid).join(', ')}). Se usa el primero.`);
     }
     const hit = matches[0];
-    const player = hit ? { uuid: hit.uuid, username: hit.username || hit.uuid, primaryGroup: hit.primary_group || 'default' } : null;
+    let player = hit ? { uuid: hit.uuid, username: hit.username || hit.uuid, primaryGroup: hit.primary_group || 'default', source: 'luckperms' } : null;
+    // Un vínculo forzado en LuckPerms manda; si no hay, se usa el de DiscordSRV (/discord link en el juego).
+    if (!player && platform === 'discord' && this.dsrvPool) player = await this.findDiscordSrvPlayer(values);
     this.identities.set(cacheKey, { at: this.now(), player });
     return player;
+  }
+
+  /** Jugador vinculado con DiscordSRV a alguno de estos IDs de Discord. */
+  async findDiscordSrvPlayer(discordIds) {
+    const rows = await this.dsrvPool.query(
+      `SELECT \`uuid\` FROM ${this.dsrvAccounts} WHERE \`discord\` IN (${marks(discordIds)}) LIMIT 1`, discordIds,
+    );
+    const uuid = rows[0]?.uuid;
+    if (!uuid) return null;
+    const player = await this.findPlayerByName(uuid);
+    // Vinculado en DiscordSRV pero sin datos en LuckPerms: se trata como jugador "default".
+    return { ...(player || { uuid: String(uuid).toLowerCase(), username: uuid, primaryGroup: 'default' }), source: 'discordsrv' };
   }
 
   async findPlayerByName(name) {
@@ -226,18 +261,20 @@ export class LuckPermsService {
   /**
    * ¿Tiene permiso la persona con estos identificadores?
    * Nunca lanza: si LuckPerms no responde se devuelve `undefined` y el bot usa sus reglas por defecto.
-   * @returns {Promise<{ result: true|false|undefined, player: object|null }>}
+   * `available` indica si LuckPerms respondió: solo entonces su respuesta manda
+   * (un jugador sin vincular queda sin permisos).
+   * @returns {Promise<{ result: true|false|undefined, player: object|null, available: boolean, groups?: string[] }>}
    */
   async check(platform, ids, node) {
-    if (!this.enabled || !this.pool) return { result: undefined, player: null };
+    if (!this.enabled || !this.pool || !this.ready) return { result: undefined, player: null, available: false };
     try {
       const player = await this.findPlayer(platform, ids);
-      if (!player) return { result: undefined, player: null };
+      if (!player) return { result: undefined, player: null, available: true };
       const user = await this.loadUser(player.uuid);
-      return { result: checkPermission(user.permissions, node), player, groups: user.groups };
+      return { result: checkPermission(user.permissions, node), player, groups: user.groups, available: true };
     } catch (err) {
       console.error(`⚠️ [LuckPerms] No se pudo comprobar ${node}: ${err.message}`);
-      return { result: undefined, player: null };
+      return { result: undefined, player: null, available: false };
     }
   }
 
@@ -302,6 +339,58 @@ export class LuckPermsService {
       [uuid, prefix.replace(/[\\%_]/g, (c) => `\\${c}`)],
     );
     return rows.map((r) => r.permission.slice(prefix.length));
+  }
+
+  // ---------------------------------------------------------------- códigos del juego (/whatsapp link)
+
+  get codeKey() {
+    return this.config.metaKeys?.code || 'impebotcode';
+  }
+
+  /**
+   * Jugadores con este código vigente (meta impebotcode que guarda ImpeGeo, temporal).
+   * Normalmente uno; si por casualidad dos tienen el mismo, el código no se acepta.
+   * @returns {Promise<Array<{ uuid: string, username: string, primaryGroup: string }>>}
+   */
+  async findCodeOwners(code) {
+    const node = metaNode(this.codeKey, code);
+    const rows = await this.query(
+      `SELECT u.\`uuid\`, u.\`server\`, u.\`world\`, u.\`expiry\`, u.\`contexts\`, p.\`username\`, p.\`primary_group\`
+       FROM ${this.t('user_permissions')} u LEFT JOIN ${this.t('players')} p ON p.\`uuid\` = u.\`uuid\`
+       WHERE u.\`permission\` = ? AND u.\`value\` = 1`,
+      [node],
+    );
+    const opts = { servers: this.servers, now: Math.floor(this.now() / 1000) };
+    const active = [...new Map(rows.filter((r) => isNodeActive(r, opts)).map((r) => [r.uuid, r])).values()];
+    return active.map((r) => ({ uuid: r.uuid, username: r.username || r.uuid, primaryGroup: r.primary_group || 'default' }));
+  }
+
+  /**
+   * Borra el código de ese jugador. Solo una llamada lo consigue (true): así un código vale una sola vez
+   * aunque llegue dos veces a la vez. El aviso a la red lo hace link() a continuación.
+   */
+  async consumeCode(uuid, code) {
+    const node = metaNode(this.codeKey, code);
+    const result = await this.query(
+      `DELETE FROM ${this.t('user_permissions')} WHERE \`uuid\` = ? AND \`permission\` = ?`, [uuid, node],
+    );
+    return Number(result?.affectedRows) > 0;
+  }
+
+  /**
+   * Anula códigos publicados donde no debían (un grupo): se borran de quien los tenga y se avisa a la red,
+   * con lo que ImpeGeo le dice al jugador que genere otro. @returns {Promise<number>} códigos borrados
+   */
+  async burnCodes(codes) {
+    const nodes = [...new Set(codes)].map((c) => metaNode(this.codeKey, c));
+    if (!nodes.length) return 0;
+    const owners = await this.query(
+      `SELECT DISTINCT \`uuid\` FROM ${this.t('user_permissions')} WHERE \`permission\` IN (${marks(nodes)})`, nodes,
+    );
+    if (!owners.length) return 0;
+    const result = await this.query(`DELETE FROM ${this.t('user_permissions')} WHERE \`permission\` IN (${marks(nodes)})`, nodes);
+    await this.afterWrite(new Set(owners.map((r) => r.uuid)));
+    return Number(result?.affectedRows) || 0;
   }
 
   async afterWrite(uuids) {
