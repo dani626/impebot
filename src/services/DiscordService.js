@@ -62,6 +62,7 @@ export class DiscordService extends EventEmitter {
         interaction.commandName = canonical;
       }
       if (interaction.isChatInputCommand?.()) this.logSlashCommand(interaction);
+      else if (interaction.isButton?.()) this.logButtonClick(interaction);
       this.emit('interaction', interaction);
     });
 
@@ -96,6 +97,22 @@ export class DiscordService extends EventEmitter {
       });
     } catch (err) {
       console.warn('[DiscordService] No se pudo registrar el comando:', err.message);
+    }
+  }
+
+  /** Deja constancia de cada pulsación de botón (controles de música, etc.). */
+  logButtonClick(interaction) {
+    try {
+      commandLogService.log({
+        source: 'discord',
+        actorId: interaction.user.id,
+        actorName: interaction.member?.displayName || interaction.user.username,
+        chatId: interaction.channelId,
+        command: `botón ${interaction.customId}`,
+        status: 'recibido',
+      });
+    } catch (err) {
+      console.warn('[DiscordService] No se pudo registrar el botón:', err.message);
     }
   }
 

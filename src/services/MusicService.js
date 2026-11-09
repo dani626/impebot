@@ -9,7 +9,7 @@ import {
   joinVoiceChannel,
   StreamType,
 } from '@discordjs/voice';
-import { SlashCommandBuilder } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import youtubeDl from 'youtube-dl-exec';
 import spotifyUrlInfo from 'spotify-url-info';
 import { CONFIG } from '../config.js';
@@ -18,6 +18,7 @@ import { ensureFfmpeg, ensureYtDlp } from '../utils/ensureBinaries.js';
 const require = createRequire(import.meta.url);
 const spotify = spotifyUrlInfo(fetch);
 const SPOTIFY_RE = /^https?:\/\/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist)\//i;
+const VOLUME_STEP = 10;
 
 // prism-media (usado por @discordjs/voice) busca ffmpeg en FFMPEG_PATH o en el PATH.
 if (!process.env.FFMPEG_PATH) {
@@ -30,6 +31,7 @@ if (!process.env.FFMPEG_PATH) {
 }
 
 export const MUSIC_COMMAND_NAMES = new Set(['play', 'skip', 'stop', 'pause', 'resume', 'cola', 'volumen']);
+export const MUSIC_BUTTON_PREFIX = 'music:';
 
 export function musicCommands() {
   return [
@@ -45,7 +47,7 @@ export function musicCommands() {
   ].map((c) => c.toJSON());
 }
 
-function formatDuration(seconds) {
+export function formatDuration(seconds) {
   if (!seconds) return '?:??';
   const s = Math.floor(seconds);
   const h = Math.floor(s / 3600);
@@ -54,17 +56,68 @@ function formatDuration(seconds) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 }
 
+/** Texto de la cola (pista actual + próximas 10). */
+export function formatQueue(queue) {
+  const lines = [];
+  if (queue.current) lines.push(`▶️ **${queue.current.title}** (${formatDuration(queue.current.duration)})`);
+  queue.tracks.slice(0, 10).forEach((t, i) => lines.push(`${i + 1}. ${t.title} (${formatDuration(t.duration)})`));
+  if (queue.tracks.length > 10) lines.push(`… y ${queue.tracks.length - 10} más`);
+  return lines.join('\n') || 'La cola está vacía.';
+}
+
+/**
+ * Mensaje "Reproduciendo ahora" con sus botones.
+ * @param {{ volume: number, tracks: any[] }} queue
+ * @param {{ title: string, url?: string, duration?: number, thumbnail?: string, requestedBy?: string }} track
+ * @param {{ paused?: boolean, finished?: string|null }} [state] finished = texto final: desactiva los botones
+ */
+export function buildNowPlayingMessage(queue, track, { paused = false, finished = null } = {}) {
+  const embed = new EmbedBuilder()
+    .setColor(finished ? 0x95a5a6 : paused ? 0xf39c12 : 0x1db954)
+    .setAuthor({ name: finished ? '⏹️ Reproducción finalizada' : paused ? '⏸️ En pausa' : '🎶 Reproduciendo ahora' })
+    .setTitle(String(track.title || 'Sin título').slice(0, 256))
+    .addFields(
+      { name: 'Duración', value: formatDuration(track.duration), inline: true },
+      { name: 'Pedida por', value: track.requestedBy || '—', inline: true },
+      { name: 'Volumen', value: `${queue.volume}%`, inline: true },
+      { name: 'En cola', value: String(queue.tracks.length), inline: true },
+    );
+  if (track.url) embed.setURL(track.url);
+  if (track.thumbnail) embed.setThumbnail(track.thumbnail);
+  if (finished) embed.setFooter({ text: finished });
+
+  const off = Boolean(finished);
+  const button = (id, label, emoji, style) => new ButtonBuilder()
+    .setCustomId(`${MUSIC_BUTTON_PREFIX}${id}`).setLabel(label).setEmoji(emoji).setStyle(style).setDisabled(off);
+  const controls = new ActionRowBuilder().addComponents(
+    button('toggle', paused ? 'Reanudar' : 'Pausar', paused ? '▶️' : '⏸️', paused ? ButtonStyle.Success : ButtonStyle.Primary),
+    button('skip', 'Saltar', '⏭️', ButtonStyle.Secondary),
+    button('stop', 'Detener', '⏹️', ButtonStyle.Danger),
+    button('voldown', 'Vol -', '🔉', ButtonStyle.Secondary),
+    button('volup', 'Vol +', '🔊', ButtonStyle.Secondary),
+  );
+  const extras = new ActionRowBuilder().addComponents(button('queue', 'Ver cola', '📜', ButtonStyle.Secondary));
+  return { embeds: [embed], components: [controls, extras] };
+}
+
 class GuildMusicQueue {
-  constructor(guildId, onIdle, resolver) {
+  /**
+   * @param {string} guildId
+   * @param {{ onIdle: (guildId: string) => void, resolver: (query: string) => Promise<any>,
+   *   onTrackStart?: (queue: GuildMusicQueue, track: any) => void, onQueueEnd?: (queue: GuildMusicQueue) => void }} hooks
+   */
+  constructor(guildId, hooks) {
     this.guildId = guildId;
-    this.resolver = resolver;
+    this.hooks = hooks;
     this.connection = null;
     this.tracks = [];
     this.current = null;
     this.volume = CONFIG.music.defaultVolume;
     this.resource = null;
     this.stream = null;
-    this.onIdle = onIdle;
+    this.textChannelId = null;
+    this.nowPlaying = null;
+    this.nowPlayingLock = Promise.resolve();
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
     this.idleTimer = null;
 
@@ -81,6 +134,10 @@ class GuildMusicQueue {
     });
   }
 
+  get isPaused() {
+    return this.player.state.status === AudioPlayerStatus.Paused;
+  }
+
   cleanupStream() {
     if (this.stream) {
       try { this.stream.kill?.(); } catch { /* ya terminado */ }
@@ -93,18 +150,20 @@ class GuildMusicQueue {
     clearTimeout(this.idleTimer);
     const next = this.tracks.shift();
     if (!next) {
+      this.hooks.onQueueEnd?.(this);
       // Salir del canal si nadie añade música en un rato.
-      this.idleTimer = setTimeout(() => this.onIdle(this.guildId), CONFIG.music.idleLeaveMs);
+      this.idleTimer = setTimeout(() => this.hooks.onIdle(this.guildId), CONFIG.music.idleLeaveMs);
       return;
     }
     this.current = next;
     try {
       // Las canciones de Spotify se buscan en YouTube justo antes de sonar.
       if (!next.url) {
-        const found = await this.resolver(next.query);
+        const found = await this.hooks.resolver(next.query);
         if (!found) throw new Error(`Sin resultados en YouTube para "${next.query}"`);
         next.url = found.url;
         next.duration = found.duration;
+        next.thumbnail = found.thumbnail;
       }
       const proc = youtubeDl.exec(next.url, {
         output: '-',
@@ -119,7 +178,7 @@ class GuildMusicQueue {
       this.resource = createAudioResource(proc.stdout, { inputType: StreamType.Arbitrary, inlineVolume: true });
       this.resource.volume?.setVolume(this.volume / 100);
       this.player.play(this.resource);
-      next.onStart?.(next);
+      this.hooks.onTrackStart?.(this, next);
     } catch (err) {
       console.error('[MusicService] No se pudo reproducir:', err.message);
       this.cleanupStream();
@@ -129,8 +188,8 @@ class GuildMusicQueue {
   }
 
   setVolume(level) {
-    this.volume = level;
-    this.resource?.volume?.setVolume(level / 100);
+    this.volume = Math.min(100, Math.max(0, level));
+    this.resource?.volume?.setVolume(this.volume / 100);
   }
 
   destroy() {
@@ -184,9 +243,60 @@ export class MusicService {
     this.queues.clear();
   }
 
-  dropQueue(guildId) {
-    this.queues.get(guildId)?.destroy();
+  newQueue(guildId) {
+    return new GuildMusicQueue(guildId, {
+      onIdle: (id) => this.dropQueue(id),
+      resolver: (q) => this.resolveTrack(q),
+      onTrackStart: (queue, track) => this.postNowPlaying(queue, track),
+      onQueueEnd: (queue) => this.finishNowPlaying(queue, 'La cola terminó'),
+    });
+  }
+
+  dropQueue(guildId, reason = 'Música detenida') {
+    const queue = this.queues.get(guildId);
+    if (queue) this.finishNowPlaying(queue, reason);
+    queue?.destroy();
     this.queues.delete(guildId);
+  }
+
+  /** Encola una tarea sobre el mensaje de reproducción para que nunca se pisen entre sí. */
+  withNowPlaying(queue, task) {
+    queue.nowPlayingLock = queue.nowPlayingLock.then(task).catch((err) => {
+      console.warn('[MusicService] Mensaje de reproducción:', err.message);
+    });
+    return queue.nowPlayingLock;
+  }
+
+  /** Publica el mensaje con botones de la canción que empieza y retira el anterior. */
+  postNowPlaying(queue, track) {
+    if (!queue.textChannelId) return;
+    return this.withNowPlaying(queue, async () => {
+      const previous = queue.nowPlaying;
+      queue.nowPlaying = null;
+      await previous?.message.delete().catch(() => {});
+      const channel = await this.discord.client.channels.fetch(queue.textChannelId);
+      const message = await channel.send(buildNowPlayingMessage(queue, track, { paused: queue.isPaused }));
+      queue.nowPlaying = { message, track };
+    });
+  }
+
+  /** Deja el mensaje actual sin botones, con un texto final. */
+  finishNowPlaying(queue, text) {
+    return this.withNowPlaying(queue, async () => {
+      const current = queue.nowPlaying;
+      if (!current) return;
+      queue.nowPlaying = null;
+      await current.message.edit(buildNowPlayingMessage(queue, current.track, { finished: text }));
+    });
+  }
+
+  /** Refresca el mensaje (pausa, volumen...) cuando el cambio vino de un comando de barra. */
+  refreshNowPlaying(queue) {
+    return this.withNowPlaying(queue, async () => {
+      const current = queue.nowPlaying;
+      if (!current) return;
+      await current.message.edit(buildNowPlayingMessage(queue, current.track, { paused: queue.isPaused }));
+    });
   }
 
   async resolveTrack(query) {
@@ -204,6 +314,7 @@ export class MusicService {
       title: entry.title || 'Sin título',
       url: entry.webpage_url || entry.original_url || entry.url,
       duration: entry.duration || 0,
+      thumbnail: entry.thumbnail || null,
     };
   }
 
@@ -221,6 +332,9 @@ export class MusicService {
   }
 
   async handleInteraction(interaction) {
+    if (interaction.isButton?.() && interaction.customId?.startsWith(MUSIC_BUTTON_PREFIX)) {
+      return this.handleButton(interaction);
+    }
     if (!interaction.isChatInputCommand() || !MUSIC_COMMAND_NAMES.has(interaction.commandName)) return;
     if (!interaction.guildId) {
       await interaction.reply({ content: 'Los comandos de música solo funcionan en un servidor.', flags: 64 });
@@ -240,11 +354,7 @@ export class MusicService {
       return;
     }
     if (name === 'cola') {
-      const lines = [];
-      if (queue.current) lines.push(`▶️ **${queue.current.title}** (${formatDuration(queue.current.duration)})`);
-      queue.tracks.slice(0, 10).forEach((t, i) => lines.push(`${i + 1}. ${t.title} (${formatDuration(t.duration)})`));
-      if (queue.tracks.length > 10) lines.push(`… y ${queue.tracks.length - 10} más`);
-      await interaction.reply({ content: lines.join('\n') || 'La cola está vacía.', flags: 64 });
+      await interaction.reply({ content: formatQueue(queue), flags: 64 });
       return;
     }
 
@@ -265,18 +375,78 @@ export class MusicService {
         break;
       case 'pause':
         queue.player.pause();
+        void this.refreshNowPlaying(queue);
         await interaction.reply('⏸️ Pausado.');
         break;
       case 'resume':
         queue.player.unpause();
+        void this.refreshNowPlaying(queue);
         await interaction.reply('▶️ Reanudado.');
         break;
       case 'volumen': {
         const level = interaction.options.getInteger('nivel', true);
         queue.setVolume(level);
+        void this.refreshNowPlaying(queue);
         await interaction.reply(`🔊 Volumen: ${level}%`);
         break;
       }
+    }
+  }
+
+  /** Botones del mensaje "Reproduciendo ahora". */
+  async handleButton(interaction) {
+    if (!interaction.guildId || (CONFIG.discord.guildId && interaction.guildId !== CONFIG.discord.guildId)) return;
+    const reply = (content) => interaction.reply({ content, flags: 64 });
+    const queue = this.queues.get(interaction.guildId);
+    const action = interaction.customId.slice(MUSIC_BUTTON_PREFIX.length);
+
+    if (!queue || !queue.nowPlaying) {
+      await reply('Esta reproducción ya terminó. Usa `/play` para empezar otra.');
+      return;
+    }
+    if (action === 'queue') {
+      await reply(formatQueue(queue));
+      return;
+    }
+    if (interaction.message.id !== queue.nowPlaying.message.id) {
+      await reply('Esos controles son de una canción anterior.');
+      return;
+    }
+    const memberChannel = interaction.member?.voice?.channelId;
+    if (!memberChannel || memberChannel !== queue.connection?.joinConfig.channelId) {
+      await reply('Debes estar en el mismo canal de voz que el bot para usar los controles.');
+      return;
+    }
+
+    const { track } = queue.nowPlaying;
+    const who = interaction.member?.displayName || interaction.user.username;
+    // update() edita el propio mensaje en la respuesta, sin depender del límite de 15 minutos del token.
+    const refresh = () => interaction.update(buildNowPlayingMessage(queue, track, { paused: queue.isPaused }));
+
+    switch (action) {
+      case 'toggle':
+        if (queue.isPaused) queue.player.unpause(); else queue.player.pause();
+        await refresh();
+        break;
+      case 'skip':
+        await interaction.deferUpdate();
+        queue.player.stop(true);
+        break;
+      case 'stop':
+        queue.nowPlaying = null;
+        await interaction.update(buildNowPlayingMessage(queue, track, { finished: `Detenido por ${who}` }));
+        this.dropQueue(interaction.guildId);
+        break;
+      case 'voldown':
+        queue.setVolume(queue.volume - VOLUME_STEP);
+        await refresh();
+        break;
+      case 'volup':
+        queue.setVolume(queue.volume + VOLUME_STEP);
+        await refresh();
+        break;
+      default:
+        await reply('Botón desconocido.');
     }
   }
 
@@ -328,7 +498,7 @@ export class MusicService {
 
     let queue = existing;
     if (!queue) {
-      queue = new GuildMusicQueue(interaction.guildId, (id) => this.dropQueue(id), (q) => this.resolveTrack(q));
+      queue = this.newQueue(interaction.guildId);
       this.queues.set(interaction.guildId, queue);
     }
     const room = CONFIG.music.maxQueueSize - queue.tracks.length;
@@ -338,6 +508,11 @@ export class MusicService {
     }
     const truncated = newTracks.length > room;
     newTracks = newTracks.slice(0, room);
+
+    // Los controles se publican en el canal de texto donde se pidió la música.
+    queue.textChannelId = interaction.channelId;
+    const requestedBy = interaction.member?.displayName || interaction.user.username;
+    for (const t of newTracks) t.requestedBy = requestedBy;
 
     if (!queue.connection) {
       const connection = joinVoiceChannel({
@@ -356,7 +531,7 @@ export class MusicService {
             entersState(connection, VoiceConnectionStatus.Connecting, 5000),
           ]);
         } catch {
-          this.dropQueue(interaction.guildId);
+          this.dropQueue(interaction.guildId, 'Desconectado del canal de voz');
         }
       });
       try {
@@ -375,7 +550,7 @@ export class MusicService {
     if (isSpotifyList) {
       await interaction.editReply(`➕ Se añadieron **${newTracks.length}** canciones de Spotify${extra}.`);
     } else if (wasIdle) {
-      await interaction.editReply(`🎶 Reproduciendo: **${first.title}** (${formatDuration(first.duration)})`);
+      await interaction.editReply(`🎶 Pedida: **${first.title}** (${formatDuration(first.duration)})`);
     } else {
       await interaction.editReply(`➕ En cola (#${queue.tracks.length}): **${first.title}** (${formatDuration(first.duration)})`);
     }
