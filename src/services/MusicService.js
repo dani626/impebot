@@ -56,6 +56,44 @@ export function formatDuration(seconds) {
   return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 }
 
+const normalizeText = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Elige, entre resultados de búsqueda de YouTube, el que corresponde a una pista de Spotify.
+ * El primer resultado no sirve a ciegas: para "Astrofónicos - Ayahuasca" YouTube devolvía
+ * una meditación de 9 horas. Se exige una duración parecida a la de Spotify y se prefiere
+ * el título que contiene el nombre de la canción y el artista.
+ * @param {Array<{ title?: string, channel?: string, uploader?: string, duration?: number }>} entries
+ * @param {{ name: string, artist?: string, duration?: number }} wanted duración en segundos
+ * @param {number} [maxDuration] duración máxima permitida en segundos
+ */
+export function pickYouTubeMatch(entries, wanted, maxDuration = Infinity) {
+  const name = normalizeText(wanted.name);
+  const artist = normalizeText(wanted.artist);
+  const expected = wanted.duration || 0;
+  const tolerance = Math.max(20, expected * 0.15);
+
+  const scored = (entries || [])
+    .filter((e) => e && e.duration > 0 && e.duration <= maxDuration)
+    .map((e) => {
+      const text = normalizeText(`${e.title} ${e.channel || e.uploader || ''}`);
+      const diff = expected ? Math.abs(e.duration - expected) : 0;
+      return {
+        entry: e,
+        diff,
+        hasName: Boolean(name) && text.includes(name),
+        hasArtist: Boolean(artist) && text.includes(artist),
+      };
+    });
+
+  const close = scored.filter((s) => !expected || s.diff <= tolerance);
+  // Sin un resultado de duración parecida, solo vale uno que nombre la canción y el artista.
+  const pool = close.length ? close : scored.filter((s) => s.hasName && (s.hasArtist || !artist));
+  pool.sort((a, b) => (Number(b.hasName) + Number(b.hasArtist)) - (Number(a.hasName) + Number(a.hasArtist)) || a.diff - b.diff);
+  return pool[0]?.entry || null;
+}
+
 /** Texto de la cola (pista actual + próximas 10). */
 export function formatQueue(queue) {
   const lines = [];
@@ -103,7 +141,7 @@ export function buildNowPlayingMessage(queue, track, { paused = false, finished 
 class GuildMusicQueue {
   /**
    * @param {string} guildId
-   * @param {{ onIdle: (guildId: string) => void, resolver: (query: string) => Promise<any>,
+   * @param {{ onIdle: (guildId: string) => void, resolver: (track: object) => Promise<any>,
    *   onTrackStart?: (queue: GuildMusicQueue, track: any) => void, onQueueEnd?: (queue: GuildMusicQueue) => void }} hooks
    */
   constructor(guildId, hooks) {
@@ -159,8 +197,11 @@ class GuildMusicQueue {
     try {
       // Las canciones de Spotify se buscan en YouTube justo antes de sonar.
       if (!next.url) {
-        const found = await this.hooks.resolver(next.query);
-        if (!found) throw new Error(`Sin resultados en YouTube para "${next.query}"`);
+        const found = await this.hooks.resolver(next);
+        if (!found) throw new Error(`Sin resultados en YouTube para "${next.title}"`);
+        if (found.duration > CONFIG.music.maxDurationSeconds) {
+          throw new Error(`"${found.title}" dura ${formatDuration(found.duration)}, supera el máximo permitido`);
+        }
         next.url = found.url;
         next.duration = found.duration;
         next.thumbnail = found.thumbnail;
@@ -246,7 +287,7 @@ export class MusicService {
   newQueue(guildId) {
     return new GuildMusicQueue(guildId, {
       onIdle: (id) => this.dropQueue(id),
-      resolver: (q) => this.resolveTrack(q),
+      resolver: (track) => (track.spotify ? this.resolveSpotifyTrack(track.spotify) : this.resolveTrack(track.query)),
       onTrackStart: (queue, track) => this.postNowPlaying(queue, track),
       onQueueEnd: (queue) => this.finishNowPlaying(queue, 'La cola terminó'),
     });
@@ -318,6 +359,25 @@ export class MusicService {
     };
   }
 
+  /** Busca en YouTube la versión de una pista de Spotify (varios candidatos, se elige el más fiel). */
+  async resolveSpotifyTrack(wanted) {
+    const query = `ytsearch8:${wanted.artist ? `${wanted.artist} - ${wanted.name}` : wanted.name}`;
+    const info = await youtubeDl(query, {
+      dumpSingleJson: true,
+      flatPlaylist: true,
+      noWarnings: true,
+      quiet: true,
+    });
+    const entry = pickYouTubeMatch(info?.entries, wanted, CONFIG.music.maxDurationSeconds);
+    if (!entry) return null;
+    return {
+      title: entry.title || wanted.name,
+      url: entry.webpage_url || (entry.id ? `https://www.youtube.com/watch?v=${entry.id}` : entry.url),
+      duration: entry.duration || 0,
+      thumbnail: entry.thumbnails?.at(-1)?.url || entry.thumbnail || null,
+    };
+  }
+
   /** Convierte un enlace de Spotify en pistas por buscar en YouTube. */
   async resolveSpotify(url) {
     const tracks = await spotify.getTracks(url);
@@ -325,9 +385,9 @@ export class MusicService {
       .filter((t) => t?.name)
       .map((t) => ({
         title: t.artist ? `${t.artist} - ${t.name}` : t.name,
-        query: `ytsearch1:${t.artist ? `${t.artist} - ${t.name}` : t.name} audio`,
+        spotify: { name: t.name, artist: t.artist || '', duration: t.duration ? Math.round(t.duration / 1000) : 0 },
         url: null,
-        duration: 0,
+        duration: t.duration ? Math.round(t.duration / 1000) : 0,
       }));
   }
 
