@@ -32,6 +32,32 @@ export class ModerationRepository {
     );
     return Number(res?.affectedRows ?? 0);
   }
+
+  async addWarning(groupJid, userIds, { reason = null, warnedBy = null } = {}) {
+    const ids = [...new Set(userIds.filter(Boolean))];
+    await dbService.query(
+      'INSERT INTO wa_warnings (group_jid, primary_jid, user_ids, reason, warned_by) VALUES (?, ?, ?, ?, ?)',
+      [groupJid, ids[0], ids.join(','), reason, warnedBy]
+    );
+  }
+
+  /** Advertencias del grupo; user_ids viene como lista separada por comas. */
+  async getWarnings(groupJid) {
+    return await dbService.query(
+      'SELECT id, primary_jid, user_ids, reason, warned_by, created_at FROM wa_warnings WHERE group_jid = ? ORDER BY id ASC',
+      [groupJid]
+    );
+  }
+
+  /** @returns {Promise<number>} filas borradas */
+  async removeWarnings(warningIds) {
+    if (!warningIds.length) return 0;
+    const res = await dbService.query(
+      `DELETE FROM wa_warnings WHERE id IN (${warningIds.map(() => '?').join(',')})`,
+      warningIds
+    );
+    return Number(res?.affectedRows ?? 0);
+  }
 }
 
 export const moderationRepository = new ModerationRepository();

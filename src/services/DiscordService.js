@@ -9,6 +9,7 @@ import {
 } from 'discord.js';
 import { CONFIG } from '../config.js';
 import { commandLogService } from './CommandLogService.js';
+import { SLASH_ALIASES, withSlashAliases } from '../utils/slashAliases.js';
 
 export class DiscordService extends EventEmitter {
   constructor() {
@@ -54,6 +55,12 @@ export class DiscordService extends EventEmitter {
     });
 
     this.client.on(Events.InteractionCreate, (interaction) => {
+      // Los alias (/queue, /volume, /reply...) se tratan como su comando original.
+      const canonical = SLASH_ALIASES[interaction.commandName];
+      if (canonical) {
+        interaction.invokedAs = interaction.commandName;
+        interaction.commandName = canonical;
+      }
       if (interaction.isChatInputCommand?.()) this.logSlashCommand(interaction);
       this.emit('interaction', interaction);
     });
@@ -83,7 +90,7 @@ export class DiscordService extends EventEmitter {
         actorId: interaction.user.id,
         actorName: interaction.member?.displayName || interaction.user.username,
         chatId: interaction.channelId,
-        command: `/${interaction.commandName}${sub ? ` ${sub}` : ''}`,
+        command: `/${interaction.invokedAs || interaction.commandName}${sub ? ` ${sub}` : ''}`,
         args,
         status: 'recibido',
       });
@@ -178,7 +185,7 @@ export class DiscordService extends EventEmitter {
   async registerGuildCommands(commands) {
     const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
     // create() actualiza por nombre y conserva comandos ajenos.
-    for (const command of commands) await guild.commands.create(command);
+    for (const command of withSlashAliases(commands)) await guild.commands.create(command);
   }
 
   async registerTicketCommands(commands) {

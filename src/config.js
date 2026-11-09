@@ -45,6 +45,10 @@ export const CONFIG = {
     allowGroupAdmins: process.env.WA_MOD_GROUP_ADMINS !== 'false',
     // Expulsar de nuevo a un baneado si vuelve a entrar al grupo
     enforceBans: process.env.WA_ENFORCE_BANS !== 'false',
+    // Advertencias acumuladas que activan la sanción automática (0 = desactivada)
+    warnLimit: Math.max(0, Number.isNaN(parseInt(process.env.WA_WARN_LIMIT, 10)) ? 3 : parseInt(process.env.WA_WARN_LIMIT, 10)),
+    // Sanción al llegar al límite: 'kick' (expulsar) o 'ban' (expulsar y bloquear)
+    warnAction: process.env.WA_WARN_ACTION === 'ban' ? 'ban' : 'kick',
   },
 
   // Registro de comandos (consola, WhatsApp y Discord)

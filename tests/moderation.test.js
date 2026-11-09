@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ModerationService } from '../src/services/ModerationService.js';
+import { parseCommand, resolveCommandName, BOT_COMMANDS } from '../src/utils/commands.js';
+import { withSlashAliases, SLASH_ALIASES } from '../src/utils/slashAliases.js';
 import { formatCommandLog } from '../src/services/CommandLogService.js';
 
 const GROUP = '120363000000000001@g.us';
@@ -11,6 +13,7 @@ function setup({ staff = [], botAdmin = true, removeStatus = '200' } = {}) {
   const removed = [];
   const bans = [];
   const logs = [];
+  const warnings = [];
   const sock = {
     user: { id: '5550000:7@s.whatsapp.net' },
     groupMetadata: async () => ({
@@ -28,13 +31,16 @@ function setup({ staff = [], botAdmin = true, removeStatus = '200' } = {}) {
     addBan: async (g, ids, meta) => { bans.push({ g, ids, ...meta }); },
     getBans: async () => bans.map((b) => ({ user_jid: b.ids[0], primary_jid: b.ids[0], reason: b.reason })),
     removeBansByPrimary: async () => 1,
+    addWarning: async (g, ids, meta) => { warnings.push({ id: warnings.length + 1, primary_jid: ids[0], user_ids: ids.join(','), reason: meta.reason }); },
+    getWarnings: async () => [...warnings],
+    removeWarnings: async (idsToRemove) => { for (const id of idsToRemove) { const i = warnings.findIndex((w) => w.id === id); if (i >= 0) warnings.splice(i, 1); } return idsToRemove.length; },
   };
-  const service = new ModerationService({ repo, config: { staff, allowGroupAdmins: true, enforceBans: true }, logger: { log: (e) => logs.push(e) } });
+  const service = new ModerationService({ repo, config: { staff, allowGroupAdmins: true, enforceBans: true, warnLimit: 3, warnAction: 'kick' }, logger: { log: (e) => logs.push(e) } });
   const msgFrom = (participant, contextInfo, text = '') => ({
     key: { remoteJid: GROUP, participant, id: 'CMD1' },
     message: { extendedTextMessage: { text, contextInfo } },
   });
-  return { service, sock, sent, removed, bans, logs, msgFrom };
+  return { service, sock, sent, removed, bans, logs, warnings, msgFrom };
 }
 
 test('un miembro sin permisos no puede banear', async () => {
@@ -116,4 +122,66 @@ test('formatCommandLog incluye origen, autor, comando y estado', () => {
   assert.match(line, /Ana/);
   assert.match(line, /!ban @333/);
   assert.match(line, /OK/);
+});
+
+test('!kick expulsa sin dejar baneo guardado', async () => {
+  const { service, sock, removed, bans, msgFrom } = setup();
+  const res = await service.handle({
+    sock, command: 'kick', args: ['@333', 'molestar'],
+    msg: msgFrom('111@lid', { mentionedJid: ['333@lid'] }),
+  });
+  assert.equal(res.status, 'ok');
+  assert.equal(removed.length, 1);
+  assert.equal(bans.length, 0);
+});
+
+test('!warn acumula advertencias y al llegar al límite expulsa y las reinicia', async () => {
+  const { service, sock, removed, warnings, msgFrom } = setup();
+  const run = () => service.handle({
+    sock, command: 'warn', args: ['@333', 'spam'],
+    msg: msgFrom('111@lid', { mentionedJid: ['333@lid'] }),
+  });
+  assert.equal((await run()).status, 'ok');
+  assert.equal((await run()).status, 'ok');
+  assert.equal(warnings.length, 2);
+  assert.equal(removed.length, 0);
+  const third = await run();
+  assert.equal(third.status, 'ok');
+  assert.match(third.detail, /sancionado/);
+  assert.equal(removed.length, 1);
+  assert.equal(warnings.length, 0);
+});
+
+test('!unwarn retira la última advertencia y !warn exige permisos', async () => {
+  const { service, sock, warnings, msgFrom } = setup();
+  const mention = { mentionedJid: ['333@lid'] };
+  await service.handle({ sock, command: 'warn', args: ['@333'], msg: msgFrom('111@lid', mention) });
+  await service.handle({ sock, command: 'warn', args: ['@333'], msg: msgFrom('111@lid', mention) });
+  await service.handle({ sock, command: 'unwarn', args: ['@333'], msg: msgFrom('111@lid', mention) });
+  assert.equal(warnings.length, 1);
+  const denied = await service.handle({ sock, command: 'warn', args: ['@333'], msg: msgFrom('222@lid', mention) });
+  assert.equal(denied.status, 'denegado');
+});
+
+test('cada comando existe en español e inglés y los alias llevan al mismo comando', () => {
+  const pairs = [
+    ['ayuda', 'help'], ['borrar', 'delete'], ['desban', 'unban'], ['expulsar', 'kick'],
+    ['advertir', 'warn'], ['advertencias', 'warns'], ['presencia', 'presence'],
+    ['responder', 'reply'], ['cerrar', 'close'], ['vincular', 'link'], ['cancelar', 'cancel'],
+    ['srecorte', 'scrop'], ['enlinea', 'online'], ['desconectado', 'offline'],
+  ];
+  for (const [es, en] of pairs) {
+    assert.equal(resolveCommandName(es), resolveCommandName(en), `${es} vs ${en}`);
+    assert.ok(BOT_COMMANDS.has(es) && BOT_COMMANDS.has(en));
+  }
+  const parsed = parseCommand('!delete algo');
+  assert.equal(parsed.command, 'borrar');
+  assert.equal(parsed.invoked, 'delete');
+  assert.equal(parseCommand('!nada').isCommand, false);
+});
+
+test('los slash commands se registran también con su alias', () => {
+  const names = withSlashAliases([{ name: 'cola' }, { name: 'play' }, { name: 'espejo' }]).map((c) => c.name);
+  for (const n of ['cola', 'queue', 'play', 'reproducir', 'espejo', 'mirror']) assert.ok(names.includes(n), n);
+  assert.equal(SLASH_ALIASES.queue, 'cola');
 });

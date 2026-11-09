@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS `wa_bans` (
   INDEX `idx_ban_primary` (`group_jid`, `primary_jid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS `wa_warnings` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `group_jid` VARCHAR(128) NOT NULL,
+  `primary_jid` VARCHAR(128) NOT NULL,
+  `user_ids` TEXT NOT NULL,
+  `reason` VARCHAR(255) DEFAULT NULL,
+  `warned_by` VARCHAR(128) DEFAULT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_warn_group` (`group_jid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS `command_logs` (
   `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
   `source` VARCHAR(16) NOT NULL,

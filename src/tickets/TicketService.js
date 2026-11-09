@@ -1,4 +1,5 @@
 import { AttachmentBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import { resolveCommandName } from '../utils/commands.js';
 import { CATEGORIES, PRIORITIES, isPrivateJid, parseOpening, ticketError, validateBody, waEventId } from './model.js';
 
 export function ticketCommands() {
@@ -18,6 +19,7 @@ export function ticketCommands() {
   return commands.map((command) => command.toJSON());
 }
 
+const TICKET_COMMANDS = new Set(['ticket', 'tickets', 'responder', 'cerrar', 'vincular', 'cancelar']);
 const COMMAND_NAMES = new Set(['responder', 'nota', 'tomar', 'soltar', 'cerrar', 'reabrir', 'prioridad']);
 const STATUS_LABEL = { OPEN: 'Abierto', PENDING: 'Esperando tu respuesta', CLOSED: 'Cerrado' };
 const splitText = (text, max = 1900) => text.match(new RegExp(`[\\s\\S]{1,${max}}`, 'g')) || [];
@@ -193,9 +195,11 @@ export class TicketService {
   async processWhatsApp(data) {
     const { jid, text = '', pushName = 'Jugador', messageId, timestamp } = data;
     if (!messageId) return;
-    const match = text.trim().match(/^[!/.](ticket|tickets|responder|cerrar|vincular|cancelar)\b\s*([\s\S]*)$/i);
-    const command = match?.[1].toLowerCase();
-    const rest = match?.[2].trim() || '';
+    // Acepta los alias en español e inglés (reply, close, link, cancel, mytickets...).
+    const match = text.trim().match(/^[!/.]([^\s]+)\s*([\s\S]*)$/);
+    const resolved = match ? resolveCommandName(match[1]) : null;
+    const command = TICKET_COMMANDS.has(resolved) ? resolved : undefined;
+    const rest = command ? match[2].trim() : '';
     // No se ejecutan comandos recuperados del historial.
     if (command && timestamp && Date.now() / 1000 - timestamp > 180) return;
     const reply = (value) => this.whatsapp.sendMessage(jid, { text: value });

@@ -80,11 +80,13 @@ export class ConsoleService {
 
       case 'saywa':
       case 'sendwa':
+      case 'decirwa':
         await this.sendWhatsAppMessage(args);
         break;
 
       case 'saydc':
       case 'senddc':
+      case 'decirdc':
         await this.sendDiscordMessage(args);
         break;
 
@@ -109,6 +111,7 @@ export class ConsoleService {
 
       case 'clear':
       case 'cls':
+      case 'limpiar':
         console.clear();
         console.log('💻 [Consola] Pantalla limpia. Escribe "help" para comandos.');
         break;
@@ -116,6 +119,8 @@ export class ConsoleService {
       case 'stop':
       case 'exit':
       case 'shutdown':
+      case 'detener':
+      case 'apagar':
         console.log('🛑 [Consola] Solicitud de apagado manual recibida...');
         process.emit('SIGINT');
         break;
@@ -137,8 +142,8 @@ export class ConsoleService {
     console.log('  status             - Muestra el estado del bot, memoria y conexiones');
     console.log('  mappings           - Lista los canales mapeados en la base de datos');
     console.log('  ping               - Mide latencia con Discord y MariaDB');
-    console.log('  saywa <jid> <txt>  - Envía un mensaje de WhatsApp a un JID/número');
-    console.log('  saydc <id> <txt>   - Envía un mensaje directo a un canal de Discord');
+    console.log('  saywa|decirwa <jid> <txt> - Envía un mensaje de WhatsApp a un JID/número');
+    console.log('  saydc|decirdc <id> <txt> - Envía un mensaje directo a un canal de Discord');
     console.log('  presence [modo]    - Consulta o cambia presencia de WhatsApp (online / offline)');
     console.log('  logs [n]           - Muestra los últimos n comandos registrados (por defecto 15)');
     console.log('  eval <código>      - Ejecuta código JS en el contexto del bot');

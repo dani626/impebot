@@ -26,7 +26,7 @@ export async function handleMessage(sock, msg) {
     const parsed = parseCommand(text);
     if (!parsed.isCommand) return;
 
-    const { prefix, command, args, restText } = parsed;
+    const { prefix, command, invoked, args, restText } = parsed;
 
     // Ignorar comandos provenientes de sincronización offline antigua (más de 3 minutos)
     const timestampSec = parseWaTimestamp(msg);
@@ -120,7 +120,11 @@ export async function handleMessage(sock, msg) {
       case 'borrar':
       case 'ban':
       case 'desban':
-      case 'bans': {
+      case 'bans':
+      case 'kick':
+      case 'warn':
+      case 'warns':
+      case 'unwarn': {
         try {
           const result = await moderationService.handle({ sock, msg, command, args, prefix });
           audit.status = result.status;
@@ -136,23 +140,28 @@ export async function handleMessage(sock, msg) {
       case 'help':
       case 'menu':
       case 'bot': {
-        const helpMessage = `🤖 *${CONFIG.botName}* 🤖\n\n` +
-          (CONFIG.tickets.enabled ? `🎫 *Soporte:*\n• ${prefix}ticket: Abrir un ticket por privado.\n• ${prefix}tickets: Ver tus casos.\n• ${prefix}responder N | mensaje: Responder un caso.\n• ${prefix}cerrar N: Cerrar tu ticket.\n• ${prefix}vincular CODIGO: Vincular tu cuenta web.\n\n` : '') +
-          `✨ *Comandos de Stickers:*\n` +
-          `• \`${prefix}s\` : Convierte la imagen a sticker (tamaño completo).\n` +
-          `• \`${prefix}scrop\` : Sticker recortado en cuadrado.\n` +
-          `• \`${prefix}scircle\` : Sticker recortado en círculo.\n` +
-          `• \`${prefix}s Mi Pack | Mi Nombre\` : Personaliza los metadatos del sticker.\n\n` +
-          `🛡️ *Moderación (solo admins/staff):*\n` +
-          `• \`${prefix}borrar\` : Responde a un mensaje para borrarlo.\n` +
-          `• \`${prefix}ban @usuario motivo\` : Expulsa y bloquea el reingreso.\n` +
-          `• \`${prefix}desban @usuario\` : Quita el baneo.\n` +
-          `• \`${prefix}bans\` : Lista los baneados del grupo.\n\n` +
-          `⚙️ *Comandos de Estado:*\n` +
-          `• \`${prefix}presence [online|offline]\` : Consulta o cambia visibilidad del bot.\n` +
-          `• \`${prefix}online\` / \`${prefix}offline\` : Atajos directos para cambiar estado.\n\n` +
-          `📌 *¿Cómo usarlo?*\n` +
-          `Envía una imagen con el comando en la leyenda, o responde a cualquier foto enviada con el comando \`${prefix}s\`.`;
+        const p = prefix;
+        const helpMessage = `🤖 *${CONFIG.botName}* 🤖\n_Cada comando funciona en español e inglés / Every command works in Spanish and English_\n\n` +
+          (CONFIG.tickets.enabled ? `🎫 *Soporte / Support* (privado):\n• ${p}ticket · ${p}tickets / ${p}mytickets\n• ${p}responder / ${p}reply N | mensaje\n• ${p}cerrar / ${p}close N\n• ${p}vincular / ${p}link CODIGO\n• ${p}cancelar / ${p}cancel\n\n` : '') +
+          `✨ *Stickers:*\n` +
+          `• ${p}s / ${p}sticker : sticker completo / full sticker\n` +
+          `• ${p}scrop / ${p}srecorte : cuadrado / square\n` +
+          `• ${p}scircle / ${p}scirculo : círculo / circle\n` +
+          `• ${p}sround / ${p}sredondo : bordes redondeados / rounded\n` +
+          `• ${p}s Mi Pack | Mi Nombre : metadatos / metadata\n\n` +
+          `🛡️ *Moderación / Moderation* (admins/staff, en grupos):\n` +
+          `• ${p}borrar / ${p}delete : responde a un mensaje / reply to a message\n` +
+          `• ${p}kick / ${p}expulsar @usuario : expulsa / removes\n` +
+          `• ${p}ban / ${p}banear @usuario motivo : expulsa y bloquea / removes and blocks\n` +
+          `• ${p}desban / ${p}unban @usuario\n` +
+          `• ${p}bans / ${p}baneados : lista / list\n` +
+          `• ${p}warn / ${p}advertir @usuario motivo : advertencia / warning\n` +
+          `• ${p}warns / ${p}advertencias [@usuario]\n` +
+          `• ${p}unwarn / ${p}quitaradvertencia @usuario [all]\n\n` +
+          `⚙️ *Estado / Status:*\n` +
+          `• ${p}presence / ${p}presencia [online|offline]\n` +
+          `• ${p}online / ${p}enlinea · ${p}offline / ${p}desconectado\n` +
+          `• ${p}help / ${p}ayuda / ${p}menu`;
 
         await sock.sendMessage(jid, { text: helpMessage }, { quoted: msg });
         break;
@@ -168,7 +177,7 @@ export async function handleMessage(sock, msg) {
         actorId: msg.key.participant || jid,
         actorName: msg.pushName || null,
         chatId: jid,
-        command: `${prefix}${command}`,
+        command: `${prefix}${invoked || command}`,
         args: restText,
         status: audit.status,
         detail: audit.detail,
