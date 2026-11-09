@@ -6,6 +6,7 @@ import { relayEngine } from './relay/RelayEngine.js';
 import { handleMessage } from './handlers/messageHandler.js';
 import { consoleService } from './services/ConsoleService.js';
 import { ticketService } from './tickets/index.js';
+import { moderationService } from './services/ModerationService.js';
 import { MusicService } from './services/MusicService.js';
 
 const musicService = new MusicService({ discord: discordService });
@@ -30,6 +31,7 @@ async function bootstrap() {
   relayEngine.start();
   ticketService.start();
   musicService.start();
+  moderationService.start(whatsAppService);
 
   // 2. Iniciar Servicio de WhatsApp (Baileys)
   try {
@@ -72,6 +74,7 @@ async function handleShutdown(signal) {
     relayEngine.stop();
     await ticketService.stop();
     musicService.stop();
+    moderationService.stop();
     discordService.destroy();
     await dbService.shutdown();
   } catch (err) {

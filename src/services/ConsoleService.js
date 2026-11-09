@@ -6,6 +6,8 @@ import { dbService } from '../database/DatabaseService.js';
 import { channelMappingRepository } from '../database/repositories/ChannelMappingRepository.js';
 import { relayEngine } from '../relay/RelayEngine.js';
 import { normalizePresence } from '../utils/whatsappMessage.js';
+import { commandLogService, formatCommandLog } from './CommandLogService.js';
+import { commandLogRepository } from '../database/repositories/CommandLogRepository.js';
 
 export class ConsoleService {
   constructor() {
@@ -32,10 +34,16 @@ export class ConsoleService {
       const input = line.trim();
       if (!input) return;
 
+      const [name, ...rest] = input.split(/ +/);
+      const entry = { source: 'consola', actorId: 'consola', command: name.toLowerCase(), args: rest.join(' ') };
+      // Se registra antes de ejecutar: comandos como stop cierran el proceso.
+      commandLogService.log({ ...entry, status: 'recibido' });
+
       try {
         await this.handleCommand(input);
       } catch (err) {
         console.error(`❌ [Consola] Error al ejecutar comando: ${err.message}`);
+        commandLogService.log({ ...entry, status: 'error', detail: err.message });
       }
     });
 
@@ -90,6 +98,11 @@ export class ConsoleService {
         await this.handlePresenceCommand(args);
         break;
 
+      case 'logs':
+      case 'registro':
+        await this.printCommandLogs(args[0]);
+        break;
+
       case 'eval':
         this.evaluateCode(args.join(' '));
         break;
@@ -127,6 +140,7 @@ export class ConsoleService {
     console.log('  saywa <jid> <txt>  - Envía un mensaje de WhatsApp a un JID/número');
     console.log('  saydc <id> <txt>   - Envía un mensaje directo a un canal de Discord');
     console.log('  presence [modo]    - Consulta o cambia presencia de WhatsApp (online / offline)');
+    console.log('  logs [n]           - Muestra los últimos n comandos registrados (por defecto 15)');
     console.log('  eval <código>      - Ejecuta código JS en el contexto del bot');
     console.log('  clear / cls        - Limpia la pantalla de la consola');
     console.log('  stop / exit        - Detiene el servidor ordenadamente (graceful shutdown)');
@@ -174,6 +188,28 @@ export class ConsoleService {
     const relayActive = Boolean(relayEngine.isRunning);
     console.log(`🔄 Relay WA<->DC: ${relayActive ? '✅ ACTIVO' : '⏸️ DETENIDO'}`);
     console.log('==================================================\n');
+  }
+
+  /**
+   * Muestra los últimos comandos registrados (consola, WhatsApp, Discord).
+   * @param {string} [countArg]
+   */
+  async printCommandLogs(countArg) {
+    if (!dbService.isConnected) {
+      console.log('⚠️ [Consola] MariaDB no está conectada: el registro histórico no está disponible.');
+      return;
+    }
+    const count = Math.min(Math.max(parseInt(countArg, 10) || 15, 1), 100);
+    const rows = (await commandLogRepository.recent(count)).reverse();
+    console.log(`\n📝 ÚLTIMOS ${rows.length} COMANDOS REGISTRADOS:`);
+    for (const r of rows) {
+      const when = new Date(r.created_at).toISOString().replace('T', ' ').slice(0, 19);
+      console.log(`${when} ${formatCommandLog({
+        source: r.source, actorId: r.actor_id, actorName: r.actor_name, chatId: r.chat_id,
+        command: r.command, args: r.args, status: r.status, detail: r.detail,
+      })}`);
+    }
+    console.log('');
   }
 
   /**

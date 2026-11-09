@@ -36,6 +36,23 @@ export const CONFIG = {
     webhookCacheTTL: parseInt(process.env.DISCORD_WEBHOOK_CACHE_TTL, 10) || 300000,
   },
 
+  // Moderación de grupos de WhatsApp (!borrar, !ban, !desban, !bans)
+  moderation: {
+    // IDs/números con permiso en todos los grupos (separados por coma). Acepta número o LID, con o sin +.
+    staff: (process.env.WA_STAFF_IDS || '').split(',')
+      .map((id) => id.trim().replace(/^\+/, '').split('@')[0].split(':')[0]).filter(Boolean),
+    // Los administradores del grupo también pueden moderar
+    allowGroupAdmins: process.env.WA_MOD_GROUP_ADMINS !== 'false',
+    // Expulsar de nuevo a un baneado si vuelve a entrar al grupo
+    enforceBans: process.env.WA_ENFORCE_BANS !== 'false',
+  },
+
+  // Registro de comandos (consola, WhatsApp y Discord)
+  commandLog: {
+    toDatabase: process.env.COMMAND_LOG_DB !== 'false',
+    retentionDays: parseInt(process.env.COMMAND_LOG_RETENTION_DAYS, 10) || 30,
+  },
+
   music: {
     enabled: process.env.MUSIC_ENABLED !== 'false',
     defaultVolume: Math.min(100, Math.max(0, parseInt(process.env.MUSIC_DEFAULT_VOLUME, 10) || 50)),

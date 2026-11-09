@@ -17,6 +17,7 @@ export const BOT_COMMANDS = new Set([
   'presencia',
   'online',
   'offline',
+  'borrar', 'ban', 'desban', 'bans',
 ]);
 
 /**

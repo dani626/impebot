@@ -3,6 +3,8 @@ import { getMediaFromMessage, createSticker } from '../services/stickerService.j
 import { whatsAppService } from '../services/WhatsAppService.js';
 import { extractWaText, parseWaTimestamp, normalizePresence, PRESENCE_TEXTS } from '../utils/whatsappMessage.js';
 import { parseCommand } from '../utils/commands.js';
+import { moderationService } from '../services/ModerationService.js';
+import { commandLogService } from '../services/CommandLogService.js';
 
 /**
  * Manejador principal de mensajes entrantes de WhatsApp para comandos y stickers.
@@ -33,8 +35,9 @@ export async function handleMessage(sock, msg) {
       return;
     }
 
-    console.log(`[COMANDO RECEPCIONADO] JID: ${jid} | Comando: ${prefix}${command}`);
-
+    // Registro de auditoría: cada comando queda en consola y en la base de datos con su resultado.
+    const audit = { status: 'ok', detail: null };
+    try {
     switch (command) {
       case 's':
       case 'sticker':
@@ -114,6 +117,22 @@ export async function handleMessage(sock, msg) {
         break;
       }
 
+      case 'borrar':
+      case 'ban':
+      case 'desban':
+      case 'bans': {
+        try {
+          const result = await moderationService.handle({ sock, msg, command, args, prefix });
+          audit.status = result.status;
+          audit.detail = result.detail || null;
+        } catch (modErr) {
+          audit.status = 'error';
+          audit.detail = modErr.message;
+          await sock.sendMessage(jid, { text: '❌ No se pudo completar la acción. Revisa que el bot sea administrador del grupo.' }, { quoted: msg }).catch(() => {});
+        }
+        break;
+      }
+
       case 'help':
       case 'menu':
       case 'bot': {
@@ -124,6 +143,11 @@ export async function handleMessage(sock, msg) {
           `• \`${prefix}scrop\` : Sticker recortado en cuadrado.\n` +
           `• \`${prefix}scircle\` : Sticker recortado en círculo.\n` +
           `• \`${prefix}s Mi Pack | Mi Nombre\` : Personaliza los metadatos del sticker.\n\n` +
+          `🛡️ *Moderación (solo admins/staff):*\n` +
+          `• \`${prefix}borrar\` : Responde a un mensaje para borrarlo.\n` +
+          `• \`${prefix}ban @usuario motivo\` : Expulsa y bloquea el reingreso.\n` +
+          `• \`${prefix}desban @usuario\` : Quita el baneo.\n` +
+          `• \`${prefix}bans\` : Lista los baneados del grupo.\n\n` +
           `⚙️ *Comandos de Estado:*\n` +
           `• \`${prefix}presence [online|offline]\` : Consulta o cambia visibilidad del bot.\n` +
           `• \`${prefix}online\` / \`${prefix}offline\` : Atajos directos para cambiar estado.\n\n` +
@@ -133,6 +157,22 @@ export async function handleMessage(sock, msg) {
         await sock.sendMessage(jid, { text: helpMessage }, { quoted: msg });
         break;
       }
+    }
+    } catch (cmdError) {
+      audit.status = 'error';
+      audit.detail = cmdError.message;
+      throw cmdError;
+    } finally {
+      commandLogService.log({
+        source: 'whatsapp',
+        actorId: msg.key.participant || jid,
+        actorName: msg.pushName || null,
+        chatId: jid,
+        command: `${prefix}${command}`,
+        args: restText,
+        status: audit.status,
+        detail: audit.detail,
+      });
     }
   } catch (error) {
     console.error('Error al procesar el mensaje:', error);

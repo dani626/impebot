@@ -8,6 +8,7 @@ import {
   ChannelType,
 } from 'discord.js';
 import { CONFIG } from '../config.js';
+import { commandLogService } from './CommandLogService.js';
 
 export class DiscordService extends EventEmitter {
   constructor() {
@@ -52,7 +53,10 @@ export class DiscordService extends EventEmitter {
       this.emit('message', message);
     });
 
-    this.client.on(Events.InteractionCreate, (interaction) => this.emit('interaction', interaction));
+    this.client.on(Events.InteractionCreate, (interaction) => {
+      if (interaction.isChatInputCommand?.()) this.logSlashCommand(interaction);
+      this.emit('interaction', interaction);
+    });
 
     this.client.on(Events.Error, (err) => {
       console.error('[DiscordService] Error en cliente de Discord:', err);
@@ -61,6 +65,31 @@ export class DiscordService extends EventEmitter {
 
     await this.client.login(CONFIG.discord.token);
     return this.client;
+  }
+
+  /**
+   * Deja constancia de cada slash command. No se guardan textos libres
+   * (como las respuestas de tickets), solo opciones cortas.
+   */
+  logSlashCommand(interaction) {
+    try {
+      const sub = interaction.options.getSubcommand(false);
+      const args = (interaction.options.data[0]?.options && sub ? interaction.options.data[0].options : interaction.options.data)
+        .filter((o) => o.name !== 'mensaje' && o.value !== undefined && o.type !== 11)
+        .map((o) => `${o.name}=${String(o.value).slice(0, 80)}`)
+        .join(' ');
+      commandLogService.log({
+        source: 'discord',
+        actorId: interaction.user.id,
+        actorName: interaction.member?.displayName || interaction.user.username,
+        chatId: interaction.channelId,
+        command: `/${interaction.commandName}${sub ? ` ${sub}` : ''}`,
+        args,
+        status: 'recibido',
+      });
+    } catch (err) {
+      console.warn('[DiscordService] No se pudo registrar el comando:', err.message);
+    }
   }
 
   /**

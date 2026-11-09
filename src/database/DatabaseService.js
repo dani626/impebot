@@ -1,6 +1,7 @@
 import mariadb from 'mariadb';
 import { CONFIG } from '../config.js';
 import { TICKET_DDL } from '../tickets/schema.js';
+import { MODERATION_DDL } from './moderationSchema.js';
 
 class DatabaseService {
   constructor() {
@@ -182,6 +183,8 @@ class DatabaseService {
           \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
+
+      for (const stmt of MODERATION_DDL) await dbConn.query(stmt);
 
       if (CONFIG.tickets.enabled) {
         for (const ddl of TICKET_DDL) await dbConn.query(ddl);
