@@ -160,3 +160,37 @@ test('pickYouTubeMatch descarta resultados que superan el máximo o no se parece
   assert.equal(pickYouTubeMatch([results[0]], { name: 'Ayahuasca', artist: 'Astrofónicos', duration: 196 }, 3600), null);
   assert.equal(pickYouTubeMatch([{ title: 'Otra cosa', duration: 600 }], { name: 'Ayahuasca', artist: 'X', duration: 196 }), null);
 });
+
+test('sale del canal de voz cuando se queda sin personas, y no si alguien vuelve', async (t) => {
+  const { CONFIG } = await import('../src/config.js');
+  const previous = CONFIG.music.emptyLeaveMs;
+  t.after(() => { CONFIG.music.emptyLeaveMs = previous; });
+  CONFIG.music.emptyLeaveMs = 10;
+
+  const members = new Map();
+  const channel = { members: { filter: (fn) => ({ size: [...members.values()].filter(fn).length }) } };
+  const svc = new MusicService({ discord: { on() {}, off() {}, client: { channels: { cache: { get: (id) => (id === 'VC1' ? channel : null) } } } } });
+  const { queue } = fakeQueue();
+  svc.queues.set('G1', queue);
+  const dropped = [];
+  svc.dropQueue = (guildId, reason) => { dropped.push(reason); svc.queues.delete(guildId); };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  members.set('bot', { user: { bot: true } });
+  members.set('ana', { user: { bot: false } });
+  svc.onVoiceState(null, { guild: { id: 'G1' } });
+  await wait(20);
+  assert.deepEqual(dropped, [], 'con alguien escuchando sigue');
+
+  members.delete('ana');
+  svc.onVoiceState({ guild: { id: 'G1' } }, null);
+  members.set('ana', { user: { bot: false } });
+  svc.onVoiceState(null, { guild: { id: 'G1' } });
+  await wait(20);
+  assert.deepEqual(dropped, [], 'si vuelve antes de que pase el tiempo, se queda');
+
+  members.delete('ana');
+  svc.onVoiceState({ guild: { id: 'G1' } }, null);
+  await wait(20);
+  assert.deepEqual(dropped, ['Todos salieron del canal de voz'], 'solo quedan bots: sale');
+});

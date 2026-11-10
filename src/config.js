@@ -1,5 +1,11 @@
 import 'dotenv/config';
 
+/** Número de segundos de una variable; admite 0. Vacía o no válida = `fallback`. */
+function seconds(value, fallback) {
+  const n = parseInt(value, 10);
+  return Number.isNaN(n) || n < 0 ? fallback : n;
+}
+
 export const CONFIG = {
   // Prefijos aceptados para los comandos de WhatsApp
   prefixes: ['!', '/', '.'],
@@ -65,7 +71,10 @@ export const CONFIG = {
     defaultVolume: Math.min(100, Math.max(0, parseInt(process.env.MUSIC_DEFAULT_VOLUME, 10) || 50)),
     maxDurationSeconds: (parseInt(process.env.MUSIC_MAX_MINUTES, 10) || 60) * 60,
     maxQueueSize: parseInt(process.env.MUSIC_MAX_QUEUE, 10) || 50,
-    idleLeaveMs: (parseInt(process.env.MUSIC_IDLE_LEAVE_SECONDS, 10) || 120) * 1000,
+    // Segundos que espera en el canal al acabar la cola (0 = sale en cuanto termina)
+    idleLeaveMs: seconds(process.env.MUSIC_IDLE_LEAVE_SECONDS, 0) * 1000,
+    // Segundos que espera si el canal de voz se queda sin personas (0 = sale al momento)
+    emptyLeaveMs: seconds(process.env.MUSIC_EMPTY_LEAVE_SECONDS, 0) * 1000,
   },
 
   tickets: {

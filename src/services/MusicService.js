@@ -238,6 +238,7 @@ class GuildMusicQueue {
 
   destroy() {
     clearTimeout(this.idleTimer);
+    clearTimeout(this.emptyTimer);
     this.tracks = [];
     this.current = null;
     this.player.removeAllListeners();
@@ -260,6 +261,7 @@ export class MusicService {
     this.queues = new Map();
     this.onInteraction = (interaction) => void this.handleInteraction(interaction)
       .catch((err) => console.error('[MusicService] Interacción:', err.message));
+    this.onVoiceState = (oldState, newState) => this.checkEmptyChannel((newState || oldState)?.guild?.id);
   }
 
   start() {
@@ -267,6 +269,7 @@ export class MusicService {
     this.prepareError = null;
     this.ready = this.prepare();
     this.discord.on('interaction', this.onInteraction);
+    this.discord.on('voiceStateUpdate', this.onVoiceState);
     this.discord.on('ready', () => {
       void this.discord.registerGuildCommands(musicCommands(), { extra: true })
         .catch((err) => console.error('[MusicService] Registro de comandos:', err.message));
@@ -287,6 +290,7 @@ export class MusicService {
 
   stop() {
     this.discord.off('interaction', this.onInteraction);
+    this.discord.off('voiceStateUpdate', this.onVoiceState);
     for (const queue of this.queues.values()) queue.destroy();
     this.queues.clear();
   }
@@ -298,6 +302,28 @@ export class MusicService {
       onTrackStart: (queue, track) => this.postNowPlaying(queue, track),
       onQueueEnd: (queue) => this.finishNowPlaying(queue, 'La cola terminó'),
     });
+  }
+
+  /**
+   * Si en el canal de voz del bot no queda ninguna persona (los bots no cuentan), sale de él
+   * tras MUSIC_EMPTY_LEAVE_SECONDS. Si alguien vuelve antes, se cancela.
+   */
+  checkEmptyChannel(guildId) {
+    const queue = guildId && this.queues.get(guildId);
+    const channelId = queue?.connection?.joinConfig?.channelId;
+    if (!channelId) return;
+    const channel = this.discord.client?.channels?.cache?.get(channelId);
+    if (!channel?.members) return;
+    const people = channel.members.filter((member) => !member.user?.bot).size;
+    if (people > 0) {
+      clearTimeout(queue.emptyTimer);
+      queue.emptyTimer = null;
+      return;
+    }
+    if (queue.emptyTimer) return;
+    queue.emptyTimer = setTimeout(() => {
+      if (this.queues.get(guildId) === queue) this.dropQueue(guildId, 'Todos salieron del canal de voz');
+    }, CONFIG.music.emptyLeaveMs);
   }
 
   dropQueue(guildId, reason = 'Música detenida') {

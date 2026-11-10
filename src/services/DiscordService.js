@@ -66,6 +66,9 @@ export class DiscordService extends EventEmitter {
       this.emit('message', message);
     });
 
+    // La música sale del canal de voz cuando se queda sin personas.
+    this.client.on(Events.VoiceStateUpdate, (oldState, newState) => this.emit('voiceStateUpdate', oldState, newState));
+
     this.client.on(Events.InteractionCreate, (interaction) => {
       // Los alias (/queue, /volume, /reply...) se tratan como su comando original.
       const canonical = SLASH_ALIASES[interaction.commandName];
