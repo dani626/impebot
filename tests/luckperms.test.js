@@ -97,6 +97,15 @@ test('con LuckPerms disponible todo comando exige su permiso en true', () => {
   assert.match(deniedText(on(false)), /No tienes permiso/);
 });
 
+test('/play es libre: no pide vincular ni permiso', () => {
+  const linked = { available: true, player: { uuid: 'u' }, result: undefined };
+  assert.equal(decide(PERMISSIONS.musicPlay, linked), true);
+  assert.equal(decide(PERMISSIONS.musicPlay, { available: true, player: null, result: undefined }), true, 'sin vincular también');
+  assert.equal(decide(PERMISSIONS.musicPlay, { available: false, player: null, result: undefined }), true, 'y sin LuckPerms');
+  assert.equal(decide(PERMISSIONS.musicPlay, { ...linked, result: false }), false, 'se le puede quitar con = false');
+  assert.equal(decide(PERMISSIONS.musicControl, linked), false, 'los demás siguen pidiendo su permiso');
+});
+
 test('sin LuckPerms (o caído) se usan las reglas de antes', () => {
   const off = { available: false, result: undefined, player: null };
   assert.equal(decide(PERMISSIONS.sticker, off), true);

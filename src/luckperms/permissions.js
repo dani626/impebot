@@ -25,7 +25,8 @@ export const PERMISSIONS = {
   moderationExempt: { node: 'impebot.moderation.exempt' },
   ticketsUse: { node: 'impebot.tickets.use', open: true },
   ticketsStaff: { node: 'impebot.tickets.staff' },
-  musicPlay: { node: 'impebot.music.play', open: true },
+  // De momento /play es libre: no exige vincular la cuenta ni permiso. impebot.music.play = false se lo quita a alguien.
+  musicPlay: { node: 'impebot.music.play', open: true, free: true },
   musicControl: { node: 'impebot.music.control', open: true },
   musicQueue: { node: 'impebot.music.queue', open: true },
   mirror: { node: 'impebot.relay.mirror' },
@@ -87,6 +88,8 @@ export const UNAVAILABLE = Object.freeze({ result: undefined, player: null, avai
  */
 export function decide(perm, lp, { staff = false, fallback = false } = {}) {
   if (staff) return true; // acceso de emergencia: nunca se pierde el control del bot
+  // free: lo puede usar cualquiera, vinculado o no. Solo lo bloquea un = false explícito (alguien vinculado).
+  if (perm?.free) return !(lp?.available && lp.result === false);
   if (lp?.available) return lp.result === true;
   return Boolean(perm?.open || fallback);
 }

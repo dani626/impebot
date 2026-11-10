@@ -26,6 +26,11 @@ export class DiscordService extends EventEmitter {
     /** @type {Map<string, { client: WebhookClient, expiresAt: number }>} */
     this.webhookCache = new Map();
     this.cacheTTL = CONFIG.discord.webhookCacheTTL || 300000; // 5 minutos
+    /** Comandos de cada servidor: se envían todos juntos (una petición por servidor). */
+    this.commandRegistry = new Map();
+    this.commandWaiters = [];
+    this.commandTimer = null;
+    this.commandDelayMs = 1500;
   }
 
   /**
@@ -208,22 +213,44 @@ export class DiscordService extends EventEmitter {
 
   /**
    * Registra comandos en DISCORD_GUILD_ID y, con `extra`, también en DISCORD_EXTRA_GUILD_IDS.
+   * Cada módulo llama al conectarse; se juntan durante un instante y se envían de una vez por servidor
+   * (crear uno a uno choca con el límite de Discord y con alias y varios servidores tardaba minutos).
+   * El envío reemplaza la lista del bot en ese servidor: los comandos que ya no existen desaparecen.
    * Si un servidor extra falla (el bot no está en él), los demás se registran igual.
    */
-  async registerGuildCommands(commands, { extra = false } = {}) {
+  registerGuildCommands(commands, { extra = false } = {}) {
     const all = withSlashAliases(commands);
-    const errors = [];
     for (const guildId of commandGuildIds({ extra })) {
+      if (!this.commandRegistry.has(guildId)) this.commandRegistry.set(guildId, new Map());
+      const byName = this.commandRegistry.get(guildId);
+      for (const command of all) byName.set(command.name, command);
+    }
+    return new Promise((resolve, reject) => {
+      this.commandWaiters.push({ resolve, reject });
+      clearTimeout(this.commandTimer);
+      this.commandTimer = setTimeout(() => void this.flushCommands(), this.commandDelayMs);
+    });
+  }
+
+  async flushCommands() {
+    const waiters = this.commandWaiters.splice(0);
+    const errors = [];
+    let mainError = null;
+    for (const [guildId, byName] of this.commandRegistry) {
       try {
         const guild = await this.client.guilds.fetch(guildId);
-        // create() actualiza por nombre y conserva comandos ajenos.
-        for (const command of all) await guild.commands.create(command);
+        await guild.commands.set([...byName.values()]);
+        console.log(`✅ [Discord] ${byName.size} comandos registrados en ${guild.name}.`);
       } catch (err) {
-        if (guildId === CONFIG.discord.guildId) throw err;
-        errors.push(`${guildId}: ${err.message}`);
+        if (guildId === CONFIG.discord.guildId) mainError = err;
+        else errors.push(`${guildId}: ${err.message}`);
       }
     }
     if (errors.length) console.error(`⚠️ [Discord] No se pudieron registrar comandos en ${errors.join('; ')}`);
+    for (const waiter of waiters) {
+      if (mainError) waiter.reject(mainError);
+      else waiter.resolve();
+    }
   }
 
   async registerTicketCommands(commands) {

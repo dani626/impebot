@@ -135,7 +135,7 @@ Los comandos de Discord se registran en `DISCORD_GUILD_ID`. Para que la música 
 | `impebot.moderation.kick` | `!kick` | admins del grupo |
 | `impebot.moderation.warn` | `!warn`, `!warns`, `!unwarn` | admins del grupo |
 | `impebot.moderation.exempt` | no se le puede sancionar | — |
-| `impebot.music.play` | `/play` | libre |
+| — (libre, sin vincular) | `/play`. `impebot.music.play = false` se lo quita a alguien vinculado | libre |
 | `impebot.music.control` | `/skip`, `/stop`, `/pause`, `/resume`, `/volumen` y botones | libre |
 | `impebot.music.queue` | `/cola` y botón de cola | libre |
 | `impebot.tickets.staff` | `/responder`, `/nota`, `/tomar`... | Gestionar servidor o `TICKETS_STAFF_ROLE_IDS` |
