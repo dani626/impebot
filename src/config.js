@@ -33,6 +33,9 @@ export const CONFIG = {
   discord: {
     token: process.env.DISCORD_BOT_TOKEN || '',
     guildId: process.env.DISCORD_GUILD_ID || '',
+    // Otros servidores (p. ej. el público) donde también funcionan la música y /minecraft.
+    // Tickets y /espejo siguen solo en DISCORD_GUILD_ID, donde están sus canales.
+    extraGuildIds: (process.env.DISCORD_EXTRA_GUILD_IDS || '').split(',').map((id) => id.trim()).filter(Boolean),
     webhookCacheTTL: parseInt(process.env.DISCORD_WEBHOOK_CACHE_TTL, 10) || 300000,
   },
 

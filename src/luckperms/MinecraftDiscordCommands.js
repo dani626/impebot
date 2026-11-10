@@ -1,5 +1,5 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { CONFIG } from '../config.js';
+import { isCommandGuild } from '../utils/guilds.js';
 import { luckPermsService } from './LuckPermsService.js';
 import { decide, PERMISSIONS } from './permissions.js';
 
@@ -30,7 +30,7 @@ export class MinecraftDiscordCommands {
     this.lp = lp;
     this.onInteraction = (interaction) => void this.handleInteraction(interaction)
       .catch((err) => console.error('[Minecraft] Interacción:', err.message));
-    this.onReady = () => void this.discord.registerGuildCommands(minecraftCommands())
+    this.onReady = () => void this.discord.registerGuildCommands(minecraftCommands(), { extra: true })
       .catch((err) => console.error('[Minecraft] Registro de comandos:', err.message));
   }
 
@@ -47,7 +47,7 @@ export class MinecraftDiscordCommands {
 
   async handleInteraction(interaction) {
     if (!interaction.isChatInputCommand?.() || interaction.commandName !== 'minecraft') return;
-    if (CONFIG.discord.guildId && interaction.guildId !== CONFIG.discord.guildId) return;
+    if (!isCommandGuild(interaction.guildId, { extra: true })) return;
     await interaction.deferReply({ flags: 64 });
     try {
       const sub = interaction.options.getSubcommand();

@@ -117,6 +117,8 @@ Si un admin fuerza otro jugador con `/minecraft vincular`, ese vínculo (meta `d
 
 `!mc` (WhatsApp) y `/minecraft info` (Discord) muestran la cuenta vinculada y el rango.
 
+Los comandos de Discord se registran en `DISCORD_GUILD_ID`. Para que la música y `/minecraft` funcionen también en el servidor público, añade su ID a `DISCORD_EXTRA_GUILD_IDS` (separados por coma). Tickets y `/espejo` siguen solo en `DISCORD_GUILD_ID`.
+
 ## Permisos
 
 | Permiso | Comandos | Sin LuckPerms |

@@ -10,6 +10,7 @@ import {
 import { CONFIG } from '../config.js';
 import { commandLogService } from './CommandLogService.js';
 import { SLASH_ALIASES, withSlashAliases } from '../utils/slashAliases.js';
+import { commandGuildIds } from '../utils/guilds.js';
 
 /**
  * Contenido reenviado desde WhatsApp nunca debe notificar a nadie en Discord:
@@ -205,10 +206,24 @@ export class DiscordService extends EventEmitter {
     });
   }
 
-  async registerGuildCommands(commands) {
-    const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
-    // create() actualiza por nombre y conserva comandos ajenos.
-    for (const command of withSlashAliases(commands)) await guild.commands.create(command);
+  /**
+   * Registra comandos en DISCORD_GUILD_ID y, con `extra`, también en DISCORD_EXTRA_GUILD_IDS.
+   * Si un servidor extra falla (el bot no está en él), los demás se registran igual.
+   */
+  async registerGuildCommands(commands, { extra = false } = {}) {
+    const all = withSlashAliases(commands);
+    const errors = [];
+    for (const guildId of commandGuildIds({ extra })) {
+      try {
+        const guild = await this.client.guilds.fetch(guildId);
+        // create() actualiza por nombre y conserva comandos ajenos.
+        for (const command of all) await guild.commands.create(command);
+      } catch (err) {
+        if (guildId === CONFIG.discord.guildId) throw err;
+        errors.push(`${guildId}: ${err.message}`);
+      }
+    }
+    if (errors.length) console.error(`⚠️ [Discord] No se pudieron registrar comandos en ${errors.join('; ')}`);
   }
 
   async registerTicketCommands(commands) {

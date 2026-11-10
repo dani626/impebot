@@ -13,6 +13,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, SlashComman
 import youtubeDl from 'youtube-dl-exec';
 import spotifyUrlInfo from 'spotify-url-info';
 import { CONFIG } from '../config.js';
+import { isCommandGuild } from '../utils/guilds.js';
 import { ensureFfmpeg, ensureYtDlp } from '../utils/ensureBinaries.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
 import { decide, musicPermission, UNAVAILABLE } from '../luckperms/permissions.js';
@@ -267,7 +268,7 @@ export class MusicService {
     this.ready = this.prepare();
     this.discord.on('interaction', this.onInteraction);
     this.discord.on('ready', () => {
-      void this.discord.registerGuildCommands(musicCommands())
+      void this.discord.registerGuildCommands(musicCommands(), { extra: true })
         .catch((err) => console.error('[MusicService] Registro de comandos:', err.message));
     });
   }
@@ -406,7 +407,7 @@ export class MusicService {
       await interaction.reply({ content: 'Los comandos de música solo funcionan en un servidor.', flags: 64 });
       return;
     }
-    if (CONFIG.discord.guildId && interaction.guildId !== CONFIG.discord.guildId) return;
+    if (!isCommandGuild(interaction.guildId, { extra: true })) return;
 
     const guildId = interaction.guildId;
     const queue = this.queues.get(guildId);
@@ -475,7 +476,7 @@ export class MusicService {
 
   /** Botones del mensaje "Reproduciendo ahora". */
   async handleButton(interaction) {
-    if (!interaction.guildId || (CONFIG.discord.guildId && interaction.guildId !== CONFIG.discord.guildId)) return;
+    if (!interaction.guildId || !isCommandGuild(interaction.guildId, { extra: true })) return;
     const reply = (content) => interaction.reply({ content, flags: 64 });
     const queue = this.queues.get(interaction.guildId);
     const action = interaction.customId.slice(MUSIC_BUTTON_PREFIX.length);
