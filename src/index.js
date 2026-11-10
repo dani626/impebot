@@ -10,9 +10,11 @@ import { moderationService } from './services/ModerationService.js';
 import { MusicService } from './services/MusicService.js';
 import { luckPermsService } from './luckperms/LuckPermsService.js';
 import { MinecraftDiscordCommands } from './luckperms/MinecraftDiscordCommands.js';
+import { DiagnosticCommands } from './services/DiagnosticCommands.js';
 
 const musicService = new MusicService({ discord: discordService });
 const minecraftCommands = new MinecraftDiscordCommands({ discord: discordService });
+const diagnosticCommands = new DiagnosticCommands({ discord: discordService });
 
 async function bootstrap() {
   console.log('==================================================');
@@ -33,6 +35,7 @@ async function bootstrap() {
   // Permisos desde LuckPerms (opcional). Si no conecta, se usan las reglas por defecto.
   await luckPermsService.start();
   minecraftCommands.start();
+  diagnosticCommands.start();
 
   // Registrar rutas antes de conectar los transportes para no perder mensajes iniciales.
   relayEngine.start();
@@ -85,6 +88,7 @@ async function handleShutdown(signal) {
     musicService.stop();
     moderationService.stop();
     minecraftCommands.stop();
+    diagnosticCommands.stop();
     await luckPermsService.stop();
     whatsAppService.stop();
     discordService.destroy();

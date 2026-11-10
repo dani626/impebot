@@ -11,6 +11,7 @@ export const SLASH_ALIASES = {
   queue: 'cola',
   volume: 'volumen',
   mirror: 'espejo',
+  diagnose: 'diagnostico',
   reply: 'responder',
   note: 'nota',
   claim: 'tomar',

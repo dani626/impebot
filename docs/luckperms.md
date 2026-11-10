@@ -139,6 +139,7 @@ Los comandos de Discord se registran en `DISCORD_GUILD_ID`. Para que la música 
 | `impebot.music.control` | `/skip`, `/stop`, `/pause`, `/resume`, `/volumen` y botones | libre |
 | `impebot.music.queue` | `/cola` y botón de cola | libre |
 | `impebot.tickets.staff` | `/responder`, `/nota`, `/tomar`... | Gestionar servidor o `TICKETS_STAFF_ROLE_IDS` |
+| `impebot.diagnose` | `/diagnostico` (por qué alguien no ve o no puede usar los comandos) | Gestionar servidor |
 | `impebot.relay.mirror` | `/espejo` (además de Gestionar servidor) | Gestionar servidor |
 
 Reglas con LuckPerms activo:

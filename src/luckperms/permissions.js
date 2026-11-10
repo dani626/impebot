@@ -30,6 +30,7 @@ export const PERMISSIONS = {
   musicControl: { node: 'impebot.music.control', open: true },
   musicQueue: { node: 'impebot.music.queue', open: true },
   mirror: { node: 'impebot.relay.mirror' },
+  diagnose: { node: 'impebot.diagnose' },
 };
 
 /** Comandos que nunca exigen permiso: sirven para identificarse. */
