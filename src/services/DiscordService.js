@@ -56,6 +56,7 @@ export class DiscordService extends EventEmitter {
       console.log('==================================================');
       console.log(`✅ ¡Bot conectado a Discord como: ${readyClient.user.tag}!`);
       console.log('==================================================\n');
+      this.startCommandWatchdog();
       this.emit('ready', readyClient);
     });
 
@@ -242,7 +243,15 @@ export class DiscordService extends EventEmitter {
     for (const [guildId, byName] of this.commandRegistry) {
       try {
         const guild = await this.client.guilds.fetch(guildId);
-        await guild.commands.set([...byName.values()]);
+        // DiscordSRV comparte la aplicación y reemplaza la lista al arrancar: conservar sus comandos.
+        const foreign = [];
+        try {
+          const existing = await guild.commands.fetch();
+          for (const c of existing?.values?.() ?? []) {
+            if (!byName.has(c.name)) foreign.push({ name: c.name, description: c.description, options: c.options, defaultMemberPermissions: c.defaultMemberPermissions, dmPermission: c.dmPermission });
+          }
+        } catch { /* sin lectura previa se registran solo los propios */ }
+        await guild.commands.set([...byName.values(), ...foreign]);
         console.log(`✅ [Discord] ${byName.size} comandos registrados en ${guild.name}.`);
       } catch (err) {
         if (guildId === CONFIG.discord.guildId) mainError = err;
@@ -254,6 +263,27 @@ export class DiscordService extends EventEmitter {
       if (mainError) waiter.reject(mainError);
       else waiter.resolve();
     }
+  }
+
+  /** Si otra herramienta (DiscordSRV) borra nuestros comandos, los vuelve a registrar. */
+  startCommandWatchdog(intervalMs = 10 * 60 * 1000) {
+    clearInterval(this.commandWatchdog);
+    this.commandWatchdog = setInterval(async () => {
+      try {
+        for (const [guildId, byName] of this.commandRegistry) {
+          const guild = await this.client.guilds.fetch(guildId);
+          const present = await guild.commands.fetch();
+          if ([...byName.keys()].some((n) => !present.some((c) => c.name === n))) {
+            console.warn(`⚠️ [Discord] Faltan comandos en ${guild.name}; se registran de nuevo.`);
+            await this.flushCommands();
+            return;
+          }
+        }
+      } catch (err) {
+        console.error(`⚠️ [Discord] Revisión de comandos falló: ${err.message}`);
+      }
+    }, intervalMs);
+    this.commandWatchdog.unref?.();
   }
 
   async registerTicketCommands(commands) {
