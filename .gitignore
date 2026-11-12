@@ -6,3 +6,5 @@ auth_info_baileys/
 bot_settings.json
 .cursor/
 .test-runtime/
+
+cookies.txt

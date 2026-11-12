@@ -23,6 +23,9 @@ const spotify = spotifyUrlInfo(fetch);
 const SPOTIFY_RE = /^https?:\/\/open\.spotify\.com\/(?:intl-[a-z]+\/)?(track|album|playlist)\//i;
 const VOLUME_STEP = 10;
 
+/** Cookies de YouTube opcionales (YTDLP_COOKIES_FILE) para vídeos con restricción de edad. */
+const ytdlpAuth = () => (process.env.YTDLP_COOKIES_FILE ? { cookies: process.env.YTDLP_COOKIES_FILE } : {});
+
 // prism-media (usado por @discordjs/voice) busca ffmpeg en FFMPEG_PATH o en el PATH.
 if (!process.env.FFMPEG_PATH) {
   try {
@@ -215,6 +218,7 @@ class GuildMusicQueue {
         noPlaylist: true,
         quiet: true,
         noWarnings: true,
+        ...ytdlpAuth(),
       }, { stdio: ['ignore', 'pipe', 'ignore'] });
       // tinyspawn devuelve una promesa; evitar rechazos sin manejar si se mata el proceso.
       proc.catch?.(() => {});
@@ -374,22 +378,33 @@ export class MusicService {
   }
 
   async resolveTrack(query) {
-    const info = await youtubeDl(query, {
-      dumpSingleJson: true,
-      noPlaylist: true,
-      defaultSearch: 'ytsearch1',
-      noWarnings: true,
-      quiet: true,
-      format: 'bestaudio/best',
-    });
-    const entry = info?.entries ? info.entries[0] : info;
-    if (!entry) return null;
-    return {
-      title: entry.title || 'Sin título',
-      url: entry.webpage_url || entry.original_url || entry.url,
-      duration: entry.duration || 0,
-      thumbnail: entry.thumbnail || null,
-    };
+    const base = { dumpSingleJson: true, noPlaylist: true, noWarnings: true, quiet: true, format: 'bestaudio/best', ...ytdlpAuth() };
+    let candidates = [query];
+    if (!/^https?:\/\//i.test(query)) {
+      // Con texto libre se prueban varios resultados: el primero puede tener restricción de edad o no estar disponible.
+      const found = await youtubeDl(`ytsearch5:${query}`, { ...base, flatPlaylist: true });
+      candidates = (found?.entries || []).map((e) => e.webpage_url || e.url || (e.id && `https://www.youtube.com/watch?v=${e.id}`)).filter(Boolean);
+    }
+    let lastError = null;
+    for (const candidate of candidates) {
+      try {
+        const info = await youtubeDl(candidate, base);
+        const entry = info?.entries ? info.entries[0] : info;
+        if (!entry) continue;
+        if (entry.duration > CONFIG.music.maxDurationSeconds && candidates.length > 1) continue;
+        return {
+          title: entry.title || 'Sin título',
+          url: entry.webpage_url || entry.original_url || entry.url,
+          duration: entry.duration || 0,
+          thumbnail: entry.thumbnail || null,
+        };
+      } catch (err) {
+        lastError = err;
+        console.warn(`[MusicService] Candidato descartado: ${String(err.message).split('\n')[0].slice(0, 140)}`);
+      }
+    }
+    if (lastError) throw lastError;
+    return null;
   }
 
   /** Busca en YouTube la versión de una pista de Spotify (varios candidatos, se elige el más fiel). */
