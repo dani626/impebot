@@ -70,6 +70,43 @@ async function indexesOf(conn, database, table) {
   return new Map(rows.map((r) => [r.name, Number(r.cols)]));
 }
 
+const MIRRORS_MIGRATED_KEY = 'relay.legacy_mirrors_migrated';
+
+/**
+ * Convierte, una sola vez, los espejos de la tabla antigua relay_mirrors en vínculos wa_to_dc.
+ * La marca en bot_settings evita que un espejo quitado después con /espejo reaparezca al reiniciar.
+ * Las tablas antiguas no se borran.
+ */
+async function migrateLegacyMirrors(conn, database, log) {
+  const tables = new Set((await conn.query(
+    "SELECT TABLE_NAME AS name FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME IN ('relay_mirrors', 'relay_aliases', 'bot_settings')",
+    [database]
+  )).map((r) => r.name.toLowerCase()));
+  if (!tables.has('relay_mirrors') || !tables.has('bot_settings')) return;
+  const done = await conn.query('SELECT 1 FROM `bot_settings` WHERE `setting_key` = ? LIMIT 1', [MIRRORS_MIGRATED_KEY]);
+  if (done.length > 0) return;
+
+  const result = await conn.query(
+    `INSERT INTO \`channel_mappings\` (\`whatsapp_jid\`, \`discord_channel_id\`, \`direction\`, \`webhook_url\`, \`created_by\`)
+     SELECT \`whatsapp_jid\`, \`discord_channel_id\`, 'wa_to_dc', \`webhook_url\`, \`created_by\` FROM \`relay_mirrors\` WHERE \`whatsapp_jid\` <> '*'
+     ON DUPLICATE KEY UPDATE \`channel_mappings\`.\`id\` = \`channel_mappings\`.\`id\``
+  );
+  const copied = Number(result?.affectedRows ?? 0);
+  if (copied > 0) log.log(`🔄 [DatabaseService] ${copied} espejo(s) de relay_mirrors convertidos en vínculos wa_to_dc.`);
+
+  const wildcard = await conn.query("SELECT COUNT(*) AS n FROM `relay_mirrors` WHERE `whatsapp_jid` = '*'");
+  if (Number(wildcard[0].n) > 0) {
+    log.warn(`⚠️ [DatabaseService] ${wildcard[0].n} espejo(s) de "todos los chats" no se convirtieron: ya no existen; añade uno por chat con /espejo agregar.`);
+  }
+  if (tables.has('relay_aliases')) {
+    const aliases = await conn.query('SELECT COUNT(*) AS n FROM `relay_aliases`');
+    if (Number(aliases[0].n) > 0) {
+      log.warn(`⚠️ [DatabaseService] ${aliases[0].n} alias de relay_aliases no se convirtieron: ahora el alias es de un vínculo; vuelve a crearlos con /espejo alias.`);
+    }
+  }
+  await conn.query('INSERT INTO `bot_settings` (`setting_key`, `setting_value`) VALUES (?, ?)', [MIRRORS_MIGRATED_KEY, '1']);
+}
+
 /**
  * Lleva channel_mappings y message_mappings al esquema de varios canales por grupo.
  * Los vínculos existentes quedan como direction = 'both', enabled = 1 y sin alias.
@@ -89,8 +126,9 @@ export async function migrateRelaySchema(conn, { database, hubGuildId = '', log 
     if (!columns.has(name)) await conn.query(`ALTER TABLE \`channel_mappings\` ADD COLUMN \`${name}\` ${definition}`);
   }
 
-  // Los vínculos anteriores a esta migración están todos en el servidor hub.
-  if (hubGuildId) {
+  // Los vínculos anteriores a esta migración están todos en el servidor hub. Solo se rellena
+  // al crear la columna: después puede haber espejos de otros servidores sin servidor anotado.
+  if (hubGuildId && !columns.has('discord_guild_id')) {
     await conn.query("UPDATE `channel_mappings` SET `discord_guild_id` = ? WHERE `discord_guild_id` = ''", [hubGuildId]);
   }
 
@@ -113,6 +151,8 @@ export async function migrateRelaySchema(conn, { database, hubGuildId = '', log 
       log.warn(`⚠️ [DatabaseService] No se aplicó uk_inbound: hay canales de Discord con varios grupos hacia WhatsApp (${shared.map((r) => r.channel).join(', ')}). Deja uno solo por canal y reinicia.`);
     }
   }
+
+  await migrateLegacyMirrors(conn, database, log);
 
   // ── message_mappings: una fila por mensaje y por vínculo ──
   indexes = await indexesOf(conn, database, 'message_mappings');

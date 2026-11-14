@@ -127,10 +127,6 @@ class DatabaseService {
         console.warn('⚠️ [DatabaseService] Advertencia al ajustar columnas de message_mappings:', alterErr.message);
       }
 
-      // Vínculos con varios canales por grupo, dirección, alias y ajustes (ver relaySchema.js).
-      // Va después de los ajustes de columnas de message_mappings: necesita la tabla ya completa.
-      await migrateRelaySchema(dbConn, { database: CONFIG.db.database, hubGuildId: CONFIG.discord.guildId });
-
       await dbConn.query(`
         CREATE TABLE IF NOT EXISTS \`bot_settings\` (
           \`setting_key\` VARCHAR(64) NOT NULL PRIMARY KEY,
@@ -140,26 +136,10 @@ class DatabaseService {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
       `);
 
-      await dbConn.query(`
-        CREATE TABLE IF NOT EXISTS \`relay_mirrors\` (
-          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
-          \`whatsapp_jid\` VARCHAR(128) NOT NULL,
-          \`discord_channel_id\` VARCHAR(64) NOT NULL,
-          \`webhook_url\` TEXT DEFAULT NULL,
-          \`created_by\` VARCHAR(64) DEFAULT NULL,
-          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          UNIQUE KEY \`uk_mirror\` (\`whatsapp_jid\`, \`discord_channel_id\`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
-
-      await dbConn.query(`
-        CREATE TABLE IF NOT EXISTS \`relay_aliases\` (
-          \`alias\` VARCHAR(64) NOT NULL PRIMARY KEY,
-          \`target\` VARCHAR(128) NOT NULL,
-          \`created_by\` VARCHAR(64) DEFAULT NULL,
-          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
+      // Vínculos con varios canales por grupo, dirección, alias y ajustes (ver relaySchema.js).
+      // Necesita message_mappings ya completa y bot_settings creada. Las tablas antiguas
+      // relay_mirrors y relay_aliases ya no se crean ni se usan; si existen, se conservan.
+      await migrateRelaySchema(dbConn, { database: CONFIG.db.database, hubGuildId: CONFIG.discord.guildId });
 
       for (const stmt of MODERATION_DDL) await dbConn.query(stmt);
 

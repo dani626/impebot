@@ -35,6 +35,31 @@ export function resolveSetting(key, mapping, globalSettings = null) {
   return definition.default;
 }
 
+export const DIRECTIONS = ['both', 'wa_to_dc', 'dc_to_wa'];
+
+/** Letras, números, - y _; no puede ser solo números para no confundirse con el número del vínculo. */
+export function isValidAlias(alias) {
+  return /^[\p{L}\p{N}_-]{2,32}$/u.test(alias) && !/^\d+$/.test(alias);
+}
+
+/**
+ * Devuelve los ajustes con una clave cambiada; value = null la quita (vuelve a heredar).
+ * Lanza un Error con mensaje para el usuario si la clave o el valor no son válidos.
+ */
+export function withSetting(settings, key, value) {
+  const definition = MAPPING_SETTINGS[key];
+  if (!definition) throw new Error(`Ajuste desconocido: ${key}. Disponibles: ${Object.keys(MAPPING_SETTINGS).join(', ')}.`);
+  const next = { ...parseSettings(settings) };
+  if (value == null) {
+    delete next[key];
+  } else if (definition.values.includes(value)) {
+    next[key] = value;
+  } else {
+    throw new Error(`Valor no válido para ${key}: ${value}. Valores: ${definition.values.join(', ')}.`);
+  }
+  return next;
+}
+
 /**
  * Vínculos a los que todavía hay que reenviar un mensaje de WhatsApp.
  * @param {Array<{id: number}>} mappings vínculos de salida del chat

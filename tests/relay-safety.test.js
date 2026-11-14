@@ -1,29 +1,9 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { MirrorService } from '../src/relay/MirrorService.js';
-import { discordService } from '../src/services/DiscordService.js';
 import { MessageTransformer, mediaSizeLimit, toByteCount } from '../src/relay/MessageTransformer.js';
 import { WhatsAppService } from '../src/services/WhatsAppService.js';
 
 const MB = 1024 * 1024;
-
-test('los espejos nunca notifican @everyone/@here ni roles, por webhook ni por bot', async () => {
-  const payloads = [];
-  const origHook = discordService.sendViaWebhook;
-  const origSend = discordService.sendMessage;
-  discordService.sendViaWebhook = async (_url, p) => { payloads.push(p); throw new Error('webhook caído'); };
-  discordService.sendMessage = async (_id, p) => { payloads.push(p); };
-  try {
-    await new MirrorService().deliver({ id: 1, discord_channel_id: 'A', webhook_url: 'https://hook/a' }, 'Grupo', {
-      content: '@everyone @here <@&123> hola',
-    });
-  } finally {
-    discordService.sendViaWebhook = origHook;
-    discordService.sendMessage = origSend;
-  }
-  assert.equal(payloads.length, 2);
-  for (const p of payloads) assert.deepEqual(p.allowedMentions, { parse: [] });
-});
 
 test('toByteCount acepta número, string y Long', () => {
   assert.equal(toByteCount(1234), 1234);

@@ -367,11 +367,6 @@ export class RelayEngine {
     }));
     const delivered = deliveries.filter(Boolean);
 
-    // Espejos antiguos (tabla relay_mirrors), sin bloquear ni afectar al relay principal.
-    void mirrorService.forwardMessage(jid, chatName, {
-      content: outgoingContent, username, avatarURL, files, embeds: outgoingEmbeds,
-    });
-
     if (delivered.length === 0) return;
 
     // 10. Si el video continúa subiéndose en background, actualizar cada copia en Discord al terminar
@@ -773,7 +768,6 @@ export class RelayEngine {
       name: groupName,
       avatarUrl: groupAvatarUrl,
     })));
-    void mirrorService.forwardEmbed(groupJid, embed, { name: groupName, avatarUrl: groupAvatarUrl });
   }
 
   /**

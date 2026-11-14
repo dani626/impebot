@@ -9,6 +9,10 @@ import { normalizePresence } from '../utils/whatsappMessage.js';
 import { commandLogService, formatCommandLog } from './CommandLogService.js';
 import { commandLogRepository } from '../database/repositories/CommandLogRepository.js';
 import { linkHintService, isGroupJid } from './LinkHintService.js';
+import { settingsRepository } from '../database/repositories/SettingsRepository.js';
+import {
+  DIRECTIONS, GLOBAL_SETTINGS_KEY, MAPPING_SETTINGS, isValidAlias, parseSettings, withSetting,
+} from '../relay/relayRouting.js';
 
 export class ConsoleService {
   constructor() {
@@ -106,6 +110,12 @@ export class ConsoleService {
         await this.printCommandLogs(args[0]);
         break;
 
+      case 'relay':
+      case 'vinculo':
+      case 'enlace':
+        await this.handleRelayCommand(args);
+        break;
+
       case 'avisos':
       case 'linkhint':
       case 'vinculos':
@@ -142,6 +152,7 @@ export class ConsoleService {
    * avisos list
    * avisos add <ID@g.us> [alias]    → añade un grupo por su ID
    * avisos add <ID canal Discord>  → toma el grupo de WhatsApp vinculado a ese canal (relay)
+   * avisos add <alias de vínculo>   → toma el grupo de WhatsApp del vínculo del relay con ese alias
    * avisos add <nombre del grupo>   → busca el grupo por nombre entre los de WhatsApp
    * avisos remove <alias|ID>        → lo quita
    */
@@ -165,6 +176,7 @@ export class ConsoleService {
       }
       let jid;
       let alias;
+      let linked = null;
       const channelId = /^(?:<#)?(\d{17,20})>?$/.exec(rest[0])?.[1];
       if (channelId) {
         // ID (o mención) de un canal de Discord vinculado por el relay: de ahí sale el grupo de WhatsApp.
@@ -187,6 +199,10 @@ export class ConsoleService {
       } else if (isGroupJid(rest[0])) {
         jid = rest[0];
         alias = rest.slice(1).join(' ');
+      } else if (isGroupJid((linked = dbService.isConnected ? await channelMappingRepository.getByAlias(rest[0]).catch(() => null) : null)?.whatsapp_jid)) {
+        // Alias de un vínculo del relay (ver "relay"): de ahí sale el grupo de WhatsApp.
+        jid = linked.whatsapp_jid;
+        alias = rest.slice(1).join(' ') || linked.alias;
       } else {
         const name = rest.join(' ');
         const sock = whatsAppService.sock;
@@ -232,7 +248,8 @@ export class ConsoleService {
     console.log('==================================================');
     console.log('  help / ?           - Muestra este menú de ayuda');
     console.log('  status             - Muestra el estado del bot, memoria y conexiones');
-    console.log('  mappings           - Lista los canales mapeados en la base de datos');
+    console.log('  mappings           - Lista los vínculos chat de WhatsApp ↔ canal de Discord');
+    console.log('  relay <nº|alias> … - Cambia un vínculo: alias, pausar, activar, direccion, ajuste (escribe "relay" para ver el uso)');
     console.log('  ping               - Mide latencia con Discord y MariaDB');
     console.log('  saywa|decirwa <jid> <txt> - Envía un mensaje de WhatsApp a un JID/número');
     console.log('  saydc|decirdc <id> <txt> - Envía un mensaje directo a un canal de Discord');
@@ -328,13 +345,119 @@ export class ConsoleService {
       if (rows.length === 0) {
         console.log('No hay canales mapeados todavía.');
       } else {
+        const arrows = { both: '<--->', wa_to_dc: '---->', dc_to_wa: '<----' };
         for (const row of rows) {
-          console.log(`[#${row.id}] WA: ${row.whatsapp_jid}  <--->  Discord: ${row.discord_channel_id}`);
+          const custom = Object.entries(parseSettings(row.settings)).map(([key, value]) => `${key}=${value}`).join(', ');
+          console.log(`[#${row.id}] WA: ${row.whatsapp_jid}  ${arrows[row.direction] || '<--->'}  Discord: ${row.discord_channel_id}`
+            + `${row.alias ? `  (${row.alias})` : ''}${row.enabled ? '' : '  ⏸️ pausado'}${custom ? `  {${custom}}` : ''}`);
         }
       }
       console.log('==================================================\n');
     } catch (err) {
       console.error('❌ [Consola] Error consultando mapeos:', err.message);
+    }
+  }
+
+  /**
+   * relay <nº|alias> alias <nombre|->            → pone o quita el alias del vínculo
+   * relay <nº|alias> pausar | activar            → deja de reenviar sin borrar el vínculo
+   * relay <nº|alias> direccion <both|wa_to_dc|dc_to_wa>
+   * relay <nº|alias> ajuste <clave> <valor|->    → ajuste propio del vínculo; "-" vuelve a heredar
+   * relay global <clave> [valor|-]               → valor por defecto para todos los vínculos
+   * @param {string[]} args
+   */
+  async handleRelayCommand(args) {
+    const usage = () => {
+      console.log('⚠️ Uso: relay <nº|alias> alias <nombre|-> | pausar | activar | direccion <both|wa_to_dc|dc_to_wa> | ajuste <clave> <valor|->');
+      console.log('        relay global <clave> [valor|-]');
+      console.log(`   Ajustes: ${Object.entries(MAPPING_SETTINGS).map(([key, def]) => `${key} (${def.values.join(' | ')}; por defecto ${def.default})`).join(', ')}`);
+      console.log('   Los números de vínculo salen en "mappings".');
+    };
+    const [ref, action, ...rest] = args;
+    if (!ref) return usage();
+    if (!dbService.isConnected) {
+      console.log('❌ [Relay] MariaDB no está conectada.');
+      return;
+    }
+    const duplicate = (err) => err?.code === 'ER_DUP_ENTRY' || err?.errno === 1062;
+
+    try {
+      if (ref.toLowerCase() === 'global') {
+        const current = parseSettings(await settingsRepository.get(GLOBAL_SETTINGS_KEY));
+        if (!action) {
+          console.log(`ℹ️ [Relay] Valores globales: ${JSON.stringify(current)}`);
+          return;
+        }
+        const next = withSetting(current, action, rest[0] && rest[0] !== '-' ? rest[0] : null);
+        await settingsRepository.set(GLOBAL_SETTINGS_KEY, JSON.stringify(next));
+        console.log(`✅ [Relay] Valores globales: ${JSON.stringify(next)}`);
+        return;
+      }
+
+      const mapping = await channelMappingRepository.findByRef(ref);
+      if (!mapping) {
+        console.log(`⚠️ [Relay] No hay ningún vínculo con el número o alias "${ref}" (revisa "mappings").`);
+        return;
+      }
+      const label = `#${mapping.id} (${mapping.whatsapp_jid} ↔ ${mapping.discord_channel_id})`;
+
+      switch ((action || '').toLowerCase()) {
+        case 'alias': {
+          const name = rest[0];
+          if (!name) return usage();
+          if (name !== '-' && !isValidAlias(name)) {
+            console.log('⚠️ [Relay] El alias solo puede tener letras, números, - y _ (2 a 32 caracteres) y no puede ser solo números.');
+            return;
+          }
+          try {
+            await channelMappingRepository.setAlias(mapping.id, name === '-' ? null : name);
+          } catch (err) {
+            if (!duplicate(err)) throw err;
+            console.log(`⚠️ [Relay] El alias "${name}" ya lo usa otro vínculo.`);
+            return;
+          }
+          console.log(`✅ [Relay] ${label}: ${name === '-' ? 'alias quitado' : `alias "${name}"`}.`);
+          return;
+        }
+        case 'pausar':
+        case 'pause':
+        case 'activar':
+        case 'resume': {
+          const enabled = ['activar', 'resume'].includes(action.toLowerCase());
+          await channelMappingRepository.setEnabled(mapping.id, enabled);
+          console.log(`✅ [Relay] ${label}: ${enabled ? 'activo' : 'pausado; no se reenvía nada hasta que lo actives'}.`);
+          return;
+        }
+        case 'direccion':
+        case 'direction': {
+          const direction = (rest[0] || '').toLowerCase();
+          if (!DIRECTIONS.includes(direction)) {
+            console.log(`⚠️ [Relay] Dirección no válida. Valores: ${DIRECTIONS.join(', ')}.`);
+            return;
+          }
+          try {
+            await channelMappingRepository.setDirection(mapping.id, direction);
+          } catch (err) {
+            if (!duplicate(err)) throw err;
+            console.log(`⚠️ [Relay] El canal ${mapping.discord_channel_id} ya tiene otro vínculo que escribe a WhatsApp; solo puede haber uno por canal.`);
+            return;
+          }
+          console.log(`✅ [Relay] ${label}: dirección ${direction}.`);
+          return;
+        }
+        case 'ajuste':
+        case 'set': {
+          if (!rest[0]) return usage();
+          const next = withSetting(mapping.settings, rest[0], rest[1] && rest[1] !== '-' ? rest[1] : null);
+          await channelMappingRepository.setSettings(mapping.id, next);
+          console.log(`✅ [Relay] ${label}: ajustes propios ${JSON.stringify(next)} (lo demás se hereda).`);
+          return;
+        }
+        default:
+          return usage();
+      }
+    } catch (err) {
+      console.log(`❌ [Relay] ${err.message}`);
     }
   }
 

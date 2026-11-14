@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { RelayEngine } from '../src/relay/RelayEngine.js';
 import { MessageTransformer } from '../src/relay/MessageTransformer.js';
-import { mirrorService } from '../src/relay/MirrorService.js';
 import { discordService } from '../src/services/DiscordService.js';
 import { whatsAppService } from '../src/services/WhatsAppService.js';
 import { ticketService } from '../src/tickets/index.js';
@@ -33,13 +32,12 @@ function stub(t, target, methods) {
  * salida = activos both/wa_to_dc; entrada = activo both/dc_to_wa.
  */
 function setup(t, { links, rows = [], hubGuildId = '', transform, globalSettings = null }) {
-  const sent = []; const saved = [...rows]; const waSent = []; const edits = []; const deletes = []; const notices = [];
+  const sent = []; const saved = [...rows]; const waSent = []; const edits = []; const deletes = []; const notices = []; const attempts = [];
   const relay = { ...CONFIG.relay }; const guildId = CONFIG.discord.guildId;
   CONFIG.relay.enabled = true; CONFIG.relay.relayOwnMessages = false; CONFIG.discord.guildId = hubGuildId;
   t.after(() => { Object.assign(CONFIG.relay, relay); CONFIG.discord.guildId = guildId; });
 
   stub(t, ticketService, { handleWhatsApp: async () => false, handleDiscord: async () => false });
-  stub(t, mirrorService, { forwardMessage: async () => {}, forwardEmbed: async () => {} });
   stub(t, userMappingRepository, { getByWhatsAppJid: async () => null });
   stub(t, settingsRepository, { get: async () => globalSettings });
   stub(t, whatsAppService, {
@@ -61,6 +59,7 @@ function setup(t, { links, rows = [], hubGuildId = '', transform, globalSettings
   });
   stub(t, discordService, {
     sendViaWebhook: async (url, payload) => {
+      attempts.push(payload);
       if (url.endsWith('/caido')) throw new Error('webhook caído');
       sent.push({ url, ...payload }); return { id: `dc-${url.split('/').pop()}` };
     },
@@ -75,7 +74,7 @@ function setup(t, { links, rows = [], hubGuildId = '', transform, globalSettings
     toDiscord: transform || (async (wa) => ({ content: wa.text, files: [], embeds: [], pendingCatboxVideo: null, quote: null })),
     toWhatsApp: async (msg) => [{ content: { text: msg.cleanContent } }],
   });
-  return { engine: new RelayEngine(), sent, saved, waSent, edits, deletes, notices };
+  return { engine: new RelayEngine(), sent, saved, waSent, edits, deletes, notices, attempts };
 }
 
 const waMessage = (extra = {}) => ({ jid: JID, messageId: 'WA1', sender: '591@s.whatsapp.net', pushName: 'Ana', text: 'hola', isFromMe: false, ...extra });
@@ -148,6 +147,17 @@ test('un canal caído no impide la entrega a los demás', async (t) => {
   assert.deepEqual(sent.map((s) => s.url), ['https://hook/2']);
   assert.deepEqual(saved.map((r) => r.channel_mapping_id), [2]);
   assert.equal(error.mock.callCount(), 1);
+});
+
+test('ningún canal notifica @everyone/@here ni roles, por webhook ni por bot', async (t) => {
+  const links = [link(1), link(2, 'wa_to_dc', { webhook_url: 'https://hook/caido' })];
+  const { engine, attempts, notices } = setup(t, { links });
+  t.mock.method(console, 'warn', () => {});
+  await engine.handleWhatsAppMessage(waMessage({ text: '@everyone @here <@&123> hola' }));
+  assert.equal(attempts.length, 2);
+  assert.equal(notices.length, 1, 'el espejo con webhook caído sale por el bot');
+  assert.match(notices[0].content, /Ana · Grupo Uno/);
+  for (const payload of [...attempts, ...notices]) assert.deepEqual(payload.allowedMentions, { parse: [] });
 });
 
 test('el enlace de una cita apunta a la copia de cada canal, o se quita si no existe', async (t) => {

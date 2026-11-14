@@ -115,6 +115,107 @@ export class ChannelMappingRepository {
   }
 
   /**
+   * @param {string} alias no distingue mayúsculas
+   * @returns {Promise<ChannelMapping|null>}
+   */
+  async getByAlias(alias) {
+    if (!alias) return null;
+    const rows = await dbService.query(`SELECT ${COLUMNS} FROM channel_mappings WHERE alias = ? LIMIT 1`, [alias]);
+    return rows.length > 0 ? rows[0] : null;
+  }
+
+  /**
+   * Busca un vínculo por su número ("12" o "#12") o por su alias.
+   * @param {string} ref
+   * @returns {Promise<ChannelMapping|null>}
+   */
+  async findByRef(ref) {
+    const value = String(ref ?? '').trim();
+    const id = /^#?(\d{1,9})$/.exec(value)?.[1];
+    return id ? this.getById(Number(id)) : this.getByAlias(value);
+  }
+
+  /**
+   * Todos los vínculos de un canal de Discord (un canal espejo puede recibir varios chats).
+   * @param {string} discordChannelId
+   * @returns {Promise<ChannelMapping[]>}
+   */
+  async getAllForChannel(discordChannelId) {
+    return await dbService.query(
+      `SELECT ${COLUMNS} FROM channel_mappings WHERE discord_channel_id = ? ORDER BY id ASC`,
+      [discordChannelId]
+    );
+  }
+
+  /**
+   * Espejos: vínculos que solo copian de WhatsApp a Discord.
+   * @returns {Promise<ChannelMapping[]>}
+   */
+  async getMirrors() {
+    return await dbService.query(`SELECT ${COLUMNS} FROM channel_mappings WHERE direction = 'wa_to_dc' ORDER BY id ASC`);
+  }
+
+  /**
+   * Vínculos con alias cuyo alias empieza por el texto dado.
+   * @param {string} prefix
+   * @param {number} [limit=25]
+   * @returns {Promise<ChannelMapping[]>}
+   */
+  async searchAliases(prefix = '', limit = 25) {
+    const escaped = String(prefix).replace(/[\\%_]/g, '\\$&');
+    return await dbService.query(
+      `SELECT ${COLUMNS} FROM channel_mappings WHERE alias IS NOT NULL AND alias LIKE ? ORDER BY alias ASC LIMIT ?`,
+      [`${escaped}%`, limit]
+    );
+  }
+
+  /**
+   * Crea un espejo (wa_to_dc). Lanza ER_DUP_ENTRY si la pareja o el alias ya existen.
+   * @param {{ whatsappJid: string, discordChannelId: string, discordGuildId: string, webhookUrl?: string|null, alias?: string|null, createdBy?: string|null }} mirror
+   */
+  async addMirror({ whatsappJid, discordChannelId, discordGuildId, webhookUrl = null, alias = null, createdBy = null }) {
+    return await dbService.query(
+      `INSERT INTO channel_mappings (whatsapp_jid, discord_channel_id, discord_guild_id, alias, direction, webhook_url, created_by)
+       VALUES (?, ?, ?, ?, 'wa_to_dc', ?, ?)`,
+      [whatsappJid, discordChannelId, discordGuildId || '', alias || null, webhookUrl, createdBy]
+    );
+  }
+
+  /**
+   * Borra un espejo. Nunca borra un vínculo both o dc_to_wa.
+   * @param {number} id
+   * @returns {Promise<number>} filas eliminadas
+   */
+  async removeMirror(id) {
+    const res = await dbService.query("DELETE FROM channel_mappings WHERE id = ? AND direction = 'wa_to_dc'", [id]);
+    return Number(res?.affectedRows ?? 0);
+  }
+
+  /** @param {number} id @param {string|null} alias null lo quita. Lanza ER_DUP_ENTRY si ya está en uso. */
+  async setAlias(id, alias) {
+    return await dbService.query('UPDATE channel_mappings SET alias = ? WHERE id = ?', [alias || null, id]);
+  }
+
+  /** @param {number} id @param {boolean} enabled */
+  async setEnabled(id, enabled) {
+    return await dbService.query('UPDATE channel_mappings SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id]);
+  }
+
+  /**
+   * Lanza ER_DUP_ENTRY si el canal ya tiene otro vínculo hacia WhatsApp.
+   * @param {number} id @param {'both'|'wa_to_dc'|'dc_to_wa'} direction
+   */
+  async setDirection(id, direction) {
+    return await dbService.query('UPDATE channel_mappings SET direction = ? WHERE id = ?', [direction, id]);
+  }
+
+  /** @param {number} id @param {object|null} settings null = todo heredado */
+  async setSettings(id, settings) {
+    const value = settings && Object.keys(settings).length > 0 ? JSON.stringify(settings) : null;
+    return await dbService.query('UPDATE channel_mappings SET settings = ? WHERE id = ?', [value, id]);
+  }
+
+  /**
    * Inserta o actualiza un mapeo de canal.
    * @param {string} whatsappJid
    * @param {string} discordChannelId

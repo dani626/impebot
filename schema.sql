@@ -66,24 +66,8 @@ CREATE TABLE IF NOT EXISTS `bot_settings` (
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 4b. Espejos: copia de los mensajes de un chat de WhatsApp ('*' = todos) a otro canal/servidor de Discord
-CREATE TABLE IF NOT EXISTS `relay_mirrors` (
-  `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `whatsapp_jid` VARCHAR(128) NOT NULL,
-  `discord_channel_id` VARCHAR(64) NOT NULL,
-  `webhook_url` TEXT DEFAULT NULL,
-  `created_by` VARCHAR(64) DEFAULT NULL,
-  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY `uk_mirror` (`whatsapp_jid`, `discord_channel_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 4c. Alias para no escribir IDs de canal ni JIDs en /espejo
-CREATE TABLE IF NOT EXISTS `relay_aliases` (
-  `alias` VARCHAR(64) NOT NULL PRIMARY KEY,
-  `target` VARCHAR(128) NOT NULL,
-  `created_by` VARCHAR(64) DEFAULT NULL,
-  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+-- Los espejos de /espejo son vínculos de channel_mappings con direction = 'wa_to_dc' y el alias
+-- es una columna del vínculo. Las tablas antiguas relay_mirrors y relay_aliases ya no se usan.
 
 -- 4d. Baneos de grupos de WhatsApp y registro de comandos
 CREATE TABLE IF NOT EXISTS `wa_bans` (
