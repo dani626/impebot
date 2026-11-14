@@ -3,7 +3,7 @@ import { moderationRepository } from '../database/repositories/ModerationReposit
 import { commandLogService } from './CommandLogService.js';
 import { getContextInfo, formatPhoneNumber } from '../utils/whatsappMessage.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
-import { decide, deniedText, PERMISSIONS, UNAVAILABLE, WHATSAPP_COMMAND_PERMISSIONS } from '../luckperms/permissions.js';
+import { decide, PERMISSIONS, UNAVAILABLE, WHATSAPP_COMMAND_PERMISSIONS } from '../luckperms/permissions.js';
 
 export const MODERATION_COMMANDS = new Set(['borrar', 'ban', 'desban', 'bans', 'kick', 'warn', 'warns', 'unwarn']);
 
@@ -91,7 +91,7 @@ export class ModerationService {
     const senderIds = [msg.key.participant, msg.key.participantAlt].map(norm).filter(Boolean);
     const auth = await this.authorizeCommand(meta, senderIds, command);
     if (!auth.allowed) {
-      await reply(deniedText(auth.luckperms, prefix));
+      // Sin permiso el bot no contesta en el chat: el resultado queda en la consola.
       return { status: 'denegado', detail: 'sin permisos' };
     }
 

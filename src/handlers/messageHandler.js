@@ -2,13 +2,17 @@ import { CONFIG } from '../config.js';
 import { getMediaFromMessage, createSticker } from '../services/stickerService.js';
 import { whatsAppService } from '../services/WhatsAppService.js';
 import { extractWaText, parseWaTimestamp, normalizePresence, PRESENCE_TEXTS } from '../utils/whatsappMessage.js';
-import { parseCommand } from '../utils/commands.js';
+import { parseCommand, resolveCommandName } from '../utils/commands.js';
 import { moderationService, MODERATION_COMMANDS, participantIds, userPart } from '../services/ModerationService.js';
 import { luckPermsService } from '../luckperms/LuckPermsService.js';
-import { decide, deniedText, WHATSAPP_COMMAND_PERMISSIONS, whatsappSenderIds } from '../luckperms/permissions.js';
+import { decide, deniedText, shouldShowLinkHint, WHATSAPP_COMMAND_PERMISSIONS, whatsappSenderIds } from '../luckperms/permissions.js';
 import { handleAccountCommand } from '../luckperms/accountCommands.js';
 import { gameLinkService, isGameCode } from '../luckperms/gameLink.js';
 import { commandLogService } from '../services/CommandLogService.js';
+import { linkHintService } from '../services/LinkHintService.js';
+
+/** Comandos para los que se avisa de que falta vincular la cuenta (alias resueltos al nombre canónico). */
+const LINK_HINT_COMMANDS = new Set(CONFIG.linkHint.commands.map((c) => resolveCommandName(c) || c));
 
 /**
  * Manejador principal de mensajes entrantes de WhatsApp para comandos y stickers.
@@ -34,7 +38,23 @@ export async function handleMessage(sock, msg) {
       await gameLinkService.burnLeaked({ sock, msg, jid, text })
         .catch((err) => console.error('⚠️ [Vincular] No se pudo anular un código publicado:', err.message));
     }
-    if (!parsed.isCommand) return;
+    if (!parsed.isCommand) {
+      // Comando que no existe: el bot no contesta, solo queda en la consola.
+      const unknown = text.trim().match(/^([!/.])([A-Za-zÁÉÍÓÚáéíóúÑñ]{2,24})(?:s|$)/);
+      if (unknown && CONFIG.prefixes.includes(unknown[1])) {
+        commandLogService.log({
+          source: 'whatsapp',
+          actorId: msg.key.participant || jid,
+          actorName: msg.pushName || null,
+          chatId: jid,
+          command: `${unknown[1]}${unknown[2].toLowerCase()}`,
+          args: text.trim().slice(unknown[0].length),
+          status: 'desconocido',
+          detail: 'el comando no existe',
+        });
+      }
+      return;
+    }
 
     const { prefix, command, invoked, args, restText } = parsed;
 
@@ -66,7 +86,11 @@ export async function handleMessage(sock, msg) {
       if (!decide(perm, lp, { staff: isStaff })) {
         audit.status = 'denegado';
         audit.detail = `sin ${perm.node}`;
-        await sock.sendMessage(jid, { text: deniedText(lp, prefix) }, { quoted: msg });
+        // Normalmente no se responde (solo queda en la consola); la excepción es la lista blanca de avisos.
+        await linkHintService.ensureLoaded();
+        if (shouldShowLinkHint(lp, { jid, command, groups: linkHintService.groupIds(), commands: LINK_HINT_COMMANDS })) {
+          await sock.sendMessage(jid, { text: deniedText(lp, prefix) }, { quoted: msg });
+        }
         return;
       }
     }

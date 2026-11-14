@@ -8,6 +8,7 @@ import { relayEngine } from '../relay/RelayEngine.js';
 import { normalizePresence } from '../utils/whatsappMessage.js';
 import { commandLogService, formatCommandLog } from './CommandLogService.js';
 import { commandLogRepository } from '../database/repositories/CommandLogRepository.js';
+import { linkHintService, isGroupJid } from './LinkHintService.js';
 
 export class ConsoleService {
   constructor() {
@@ -105,6 +106,12 @@ export class ConsoleService {
         await this.printCommandLogs(args[0]);
         break;
 
+      case 'avisos':
+      case 'linkhint':
+      case 'vinculos':
+        await this.handleLinkHintCommand(args);
+        break;
+
       case 'eval':
         this.evaluateCode(args.join(' '));
         break;
@@ -132,6 +139,71 @@ export class ConsoleService {
   }
 
   /**
+   * avisos list
+   * avisos add <ID@g.us> [alias]    → añade un grupo por su ID
+   * avisos add <nombre del grupo>   → busca el grupo por nombre entre los de WhatsApp
+   * avisos remove <alias|ID>        → lo quita
+   */
+  async handleLinkHintCommand(args) {
+    const sub = (args[0] || 'list').toLowerCase();
+    const rest = args.slice(1);
+    if (sub === 'list' || sub === 'lista') {
+      const rows = await linkHintService.list();
+      if (!rows.length) {
+        console.log('ℹ️ [Avisos] No hay grupos. Usa: avisos add <ID@g.us | nombre del grupo> [alias]');
+        return;
+      }
+      console.log(`📋 [Avisos] Grupos donde se avisa de que falta vincular (comandos: ${CONFIG.linkHint.commands.join(', ')}):`);
+      for (const r of rows) console.log(`   • ${r.jid}${r.alias ? ` (${r.alias})` : ''} [${r.source}]`);
+      return;
+    }
+    if (sub === 'add' || sub === 'agregar') {
+      if (!rest.length) {
+        console.log('⚠️ Uso: avisos add <ID@g.us> [alias]  |  avisos add <nombre del grupo>');
+        return;
+      }
+      let jid;
+      let alias;
+      if (isGroupJid(rest[0])) {
+        jid = rest[0];
+        alias = rest.slice(1).join(' ');
+      } else {
+        const name = rest.join(' ');
+        const sock = whatsAppService.sock;
+        if (!whatsAppService.isReady || !sock) {
+          console.log('❌ [Avisos] WhatsApp no está conectado: usa el ID del grupo (@g.us).');
+          return;
+        }
+        const groups = Object.values(await sock.groupFetchAllParticipating());
+        const wanted = name.toLowerCase();
+        const exact = groups.filter((g) => String(g.subject).toLowerCase() === wanted);
+        const found = exact.length ? exact : groups.filter((g) => String(g.subject).toLowerCase().includes(wanted));
+        if (found.length !== 1) {
+          console.log(found.length
+            ? `⚠️ [Avisos] "${name}" coincide con varios grupos, usa el ID: ${found.map((g) => `${g.subject} → ${g.id}`).join(' | ')}`
+            : `⚠️ [Avisos] No encontré ningún grupo llamado "${name}" donde esté el bot.`);
+          return;
+        }
+        jid = found[0].id;
+        alias = found[0].subject;
+      }
+      const res = await linkHintService.add(jid, alias);
+      console.log(`✅ [Avisos] ${res.existed ? 'Actualizado' : 'Añadido'}: ${res.jid}${res.alias ? ` (${res.alias})` : ''}. Ya se avisa ahí, sin reiniciar.`);
+      return;
+    }
+    if (sub === 'remove' || sub === 'quitar') {
+      if (!rest.length) {
+        console.log('⚠️ Uso: avisos remove <alias|ID@g.us>');
+        return;
+      }
+      const res = await linkHintService.remove(rest.join(' '));
+      console.log(`✅ [Avisos] Quitado: ${res.jid}${res.alias ? ` (${res.alias})` : ''}.`);
+      return;
+    }
+    console.log('⚠️ Uso: avisos [list] | avisos add <ID@g.us | nombre> [alias] | avisos remove <alias|ID>');
+  }
+
+  /**
    * Muestra la lista de comandos disponibles.
    */
   printHelp() {
@@ -146,6 +218,7 @@ export class ConsoleService {
     console.log('  saydc|decirdc <id> <txt> - Envía un mensaje directo a un canal de Discord');
     console.log('  presence [modo]    - Consulta o cambia presencia de WhatsApp (online / offline)');
     console.log('  logs [n]           - Muestra los últimos n comandos registrados (por defecto 15)');
+    console.log('  avisos [list|add|remove] - Grupos donde se avisa de que falta vincular la cuenta');
     console.log('  eval <código>      - Ejecuta código JS en el contexto del bot');
     console.log('  clear / cls        - Limpia la pantalla de la consola');
     console.log('  stop / exit        - Detiene el servidor ordenadamente (graceful shutdown)');

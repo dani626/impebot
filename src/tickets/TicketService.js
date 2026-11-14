@@ -1,7 +1,8 @@
 import { AttachmentBuilder, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { resolveCommandName } from '../utils/commands.js';
 import { CATEGORIES, PRIORITIES, isPrivateJid, parseOpening, ticketError, validateBody, waEventId } from './model.js';
-import { decide, deniedText, PERMISSIONS, TICKET_PLAYER_PERMISSIONS, UNAVAILABLE, whatsappSenderIds } from '../luckperms/permissions.js';
+import { commandLogService } from '../services/CommandLogService.js';
+import { decide, PERMISSIONS, TICKET_PLAYER_PERMISSIONS, UNAVAILABLE, whatsappSenderIds } from '../luckperms/permissions.js';
 
 export function ticketCommands() {
   const commands = [
@@ -238,7 +239,11 @@ export class TicketService {
     if (perm) {
       const lp = await this.permissions('whatsapp', senderIds, perm.node).catch(() => UNAVAILABLE);
       const staff = senderIds.some((id) => (this.config.staffIds || []).includes(String(id).split('@')[0].split(':')[0]));
-      if (!decide(perm, lp, { staff })) { await reply(deniedText(lp)); return; }
+      if (!decide(perm, lp, { staff })) {
+        // Sin permiso no se contesta en el chat: solo queda en la consola.
+        commandLogService.log({ source: 'whatsapp', actorId: jid, actorName: pushName, chatId: jid, command: `!${command}`, args: rest, status: 'denegado', detail: `sin ${perm.node}` });
+        return;
+      }
     }
     if (command === 'cancelar') { this.wizards.delete(jid); await reply('Apertura cancelada.'); return; }
     if (command === 'tickets') {

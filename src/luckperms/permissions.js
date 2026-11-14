@@ -99,6 +99,16 @@ export function decide(perm, lp, { staff = false, fallback = false } = {}) {
   return Boolean(perm?.open || fallback);
 }
 
+/**
+ * ¿Se avisa en el chat de que falta vincular la cuenta? Solo si la persona NO está vinculada, el comando
+ * está en la lista (WA_LINK_HINT_COMMANDS) y el mensaje viene de un grupo de la lista (WA_LINK_HINT_GROUPS).
+ * @param {{ available?: boolean, player?: object|null }|undefined} lp
+ * @param {{ jid: string, command: string, groups: string[], commands: Set<string> }} where
+ */
+export function shouldShowLinkHint(lp, { jid, command, groups, commands }) {
+  return Boolean(lp?.available && !lp.player && jid?.endsWith('@g.us') && groups.includes(jid) && commands.has(command));
+}
+
 /** Mensaje al denegar: si la persona no está vinculada, se le explica cómo hacerlo. */
 export function deniedText(lp, prefix = '!') {
   if (lp?.available && !lp.player) {

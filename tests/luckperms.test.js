@@ -375,3 +375,33 @@ test('Discord: usa el vínculo de DiscordSRV si no hay uno forzado en LuckPerms'
   await lp.findPlayer('whatsapp', ['51900000099']);
   assert.equal(dsrvQueries.length, before);
 });
+
+test('el aviso de vincular solo sale en la lista blanca de grupos y comandos, y solo a quien no está vinculado', async () => {
+  const { shouldShowLinkHint } = await import('../src/luckperms/permissions.js');
+  const where = { jid: '111@g.us', command: 's', groups: ['111@g.us'], commands: new Set(['s']) };
+  const sinVincular = { available: true, player: null };
+  assert.equal(shouldShowLinkHint(sinVincular, where), true);
+  assert.equal(shouldShowLinkHint(sinVincular, { ...where, jid: '5551@s.whatsapp.net' }), false, 'por privado no dice nada');
+  assert.equal(shouldShowLinkHint(sinVincular, { ...where, jid: '222@g.us' }), false, 'otro grupo no dice nada');
+  assert.equal(shouldShowLinkHint(sinVincular, { ...where, command: 'help' }), false, 'otro comando no dice nada');
+  assert.equal(shouldShowLinkHint({ available: true, player: { uuid: 'u' } }, where), false, 'vinculado sin permiso: callado');
+  assert.equal(shouldShowLinkHint({ available: false, player: null }, where), false);
+});
+
+test('LinkHintService: añade y quita grupos en caliente y valida el ID', async () => {
+  const { LinkHintService } = await import('../src/services/LinkHintService.js');
+  const svc = new LinkHintService();
+  svc.loaded = true; // sin leer la base de datos
+  svc.save = async () => {};
+  assert.deepEqual(svc.groupIds(), []);
+  await assert.rejects(() => svc.add('no-es-un-grupo'), /@g\.us/);
+  const res = await svc.add('120363111111111111@g.us', 'General');
+  assert.equal(res.existed, false);
+  assert.deepEqual(svc.groupIds(), ['120363111111111111@g.us']);
+  assert.equal((await svc.add('120363111111111111@g.us')).existed, true);
+  assert.equal(svc.dynamic.get('120363111111111111@g.us'), 'General', 'conserva el alias');
+  const removed = await svc.remove('general');
+  assert.equal(removed.jid, '120363111111111111@g.us');
+  assert.deepEqual(svc.groupIds(), []);
+  await assert.rejects(() => svc.remove('nada'), /No hay ningún grupo/);
+});

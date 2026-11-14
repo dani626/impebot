@@ -277,7 +277,7 @@ test('con LuckPerms, !vincular no exige permiso y activa el rango; !ticket sí l
   const send = (text, id) => f.service.processWhatsApp({ jid, text, messageId: id, timestamp: now, rawMessage: { key: { remoteJid: jid, id } } });
 
   await send('!ticket', 'm1');
-  assert.match(f.state.wa.at(-1).text, /vincular CODIGO/, 'sin vincular no puede abrir tickets');
+  assert.equal(f.state.wa.length, 0, 'sin vincular no puede abrir tickets y el bot no contesta');
   assert.equal(f.service.wizards.size, 0);
 
   await send('!verificar 0123456789abcdef0123456789abcdef', 'm2');
