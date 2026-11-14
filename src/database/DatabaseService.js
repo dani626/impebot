@@ -2,6 +2,7 @@ import mariadb from 'mariadb';
 import { CONFIG } from '../config.js';
 import { TICKET_DDL } from '../tickets/schema.js';
 import { MODERATION_DDL } from './moderationSchema.js';
+import { CHANNEL_MAPPINGS_DDL, MESSAGE_MAPPINGS_DDL, migrateRelaySchema } from './relaySchema.js';
 
 class DatabaseService {
   constructor() {
@@ -50,19 +51,7 @@ class DatabaseService {
       });
 
       // 4. Crear tablas requeridas si no existen
-      await dbConn.query(`
-        CREATE TABLE IF NOT EXISTS \`channel_mappings\` (
-          \`id\` INT AUTO_INCREMENT PRIMARY KEY,
-          \`whatsapp_jid\` VARCHAR(128) NOT NULL,
-          \`discord_channel_id\` VARCHAR(64) NOT NULL,
-          \`webhook_url\` TEXT DEFAULT NULL,
-          \`webhook_id\` VARCHAR(64) DEFAULT NULL,
-          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          UNIQUE KEY \`uk_whatsapp_jid\` (\`whatsapp_jid\`),
-          INDEX \`idx_discord_channel_id\` (\`discord_channel_id\`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
+      await dbConn.query(CHANNEL_MAPPINGS_DDL);
 
       await dbConn.query(`
         CREATE TABLE IF NOT EXISTS \`user_mappings\` (
@@ -103,23 +92,7 @@ class DatabaseService {
         console.warn('⚠️ [DatabaseService] Advertencia al verificar migración de tabla message_logs:', e.message);
       }
 
-      await dbConn.query(`
-        CREATE TABLE IF NOT EXISTS \`message_mappings\` (
-          \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
-          \`wa_message_id\` VARCHAR(128) DEFAULT NULL,
-          \`discord_message_id\` VARCHAR(64) DEFAULT NULL,
-          \`channel_mapping_id\` INT DEFAULT NULL,
-          \`origin_platform\` VARCHAR(32) NOT NULL DEFAULT 'whatsapp',
-          \`sender_name\` VARCHAR(128) DEFAULT NULL,
-          \`content\` TEXT DEFAULT NULL,
-          \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          INDEX \`idx_wa_message_id\` (\`wa_message_id\`),
-          INDEX \`idx_discord_message_id\` (\`discord_message_id\`),
-          INDEX \`idx_origin_platform\` (\`origin_platform\`),
-          INDEX \`idx_created_at\` (\`created_at\`),
-          CONSTRAINT \`fk_channel_mapping_message\` FOREIGN KEY (\`channel_mapping_id\`) REFERENCES \`channel_mappings\` (\`id\`) ON DELETE SET NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-      `);
+      await dbConn.query(MESSAGE_MAPPINGS_DDL);
 
       // Asegurar que las nuevas columnas existan si la tabla venía del rename
       try {
@@ -153,6 +126,10 @@ class DatabaseService {
       } catch (alterErr) {
         console.warn('⚠️ [DatabaseService] Advertencia al ajustar columnas de message_mappings:', alterErr.message);
       }
+
+      // Vínculos con varios canales por grupo, dirección, alias y ajustes (ver relaySchema.js).
+      // Va después de los ajustes de columnas de message_mappings: necesita la tabla ya completa.
+      await migrateRelaySchema(dbConn, { database: CONFIG.db.database, hubGuildId: CONFIG.discord.guildId });
 
       await dbConn.query(`
         CREATE TABLE IF NOT EXISTS \`bot_settings\` (

@@ -12,6 +12,10 @@ import { formatPhoneNumber, resolveParticipantActionText } from '../utils/whatsa
 import { ticketService } from '../tickets/index.js';
 import { mirrorService } from './MirrorService.js';
 import { isPrivateJid } from '../tickets/model.js';
+import { settingsRepository } from '../database/repositories/SettingsRepository.js';
+import {
+  GLOBAL_SETTINGS_KEY, displayNameFor, jumpUrl, pendingDestinations, resolveSetting, retargetQuoteLink,
+} from './relayRouting.js';
 
 /**
  * Genera embeds formateados para estados de subida a Catbox.
@@ -160,6 +164,8 @@ export class RelayEngine {
     this.subscriptions = [];
     /** @type {Set<string>} Caché de deduplicación para eventos recientes de grupos */
     this.recentGroupEvents = new Set();
+    /** @type {Map<string, Promise<object|null>>} Creaciones de canal en curso, para no crear dos a la vez para el mismo chat */
+    this.autoCreating = new Map();
   }
 
   /**
@@ -239,21 +245,15 @@ export class RelayEngine {
       return;
     }
 
-    // 3. Verificar si el grupo o chat tiene un mapeo a un canal de Discord
-    let mapping = await channelMappingRepository.getByWhatsAppJid(jid);
+    // 3. Canales de Discord que reciben este chat (se crea el del servidor hub si falta)
+    const mappings = await this.resolveOutboundMappings(jid, waData);
+    if (mappings.length === 0) return;
 
-    // Si no existe mapeo y se especificó DISCORD_GUILD_ID, crearlo automáticamente
-    if (!mapping && CONFIG.discord.guildId) {
-      mapping = await this.autoCreateMapping(waData);
-    }
-
-    if (!mapping) return;
-
-    // 4. Prevención de bucles: verificar si el mensaje ya fue registrado
-    const alreadyProcessed = await messageMappingRepository.exists(messageId, null);
-    if (alreadyProcessed) {
-      return;
-    }
+    // 4. Prevención de bucles y duplicados: solo los vínculos que aún no tienen copia de este mensaje.
+    // El eco de un mensaje escrito desde Discord no vuelve a su canal de origen.
+    const targets = pendingDestinations(mappings, await messageMappingRepository.getAllByWaMessageId(messageId));
+    if (targets.length === 0) return;
+    const primary = targets[0];
 
     // 5. Determinar identidad del remitente (Mapeo personalizado o fallback con pushName y avatar)
     const userMap = await userMappingRepository.getByWhatsAppJid(sender);
@@ -268,18 +268,11 @@ export class RelayEngine {
       }
     }
 
-    // 6. Transformar mensaje a formato Discord
-    let guildId = CONFIG.discord.guildId;
-    if (!guildId && discordService.isReady && discordService.client) {
-      const ch = discordService.client.channels.cache.get(mapping.discord_channel_id);
-      if (ch?.guildId) {
-        guildId = ch.guildId;
-      }
-    }
-
-    const { content, files, embeds, pendingCatboxVideo } = await MessageTransformer.toDiscord(waData, {
-      channelId: mapping.discord_channel_id,
-      guildId,
+    // 6. Transformar mensaje a formato Discord (una sola vez: descarga los adjuntos)
+    const { content, files, embeds, pendingCatboxVideo, quote } = await MessageTransformer.toDiscord(waData, {
+      channelId: primary.discord_channel_id,
+      guildId: this.guildIdOf(primary),
+      mappingId: primary.id,
     });
     if (!content && files.length === 0 && (!embeds || embeds.length === 0) && !pendingCatboxVideo) return;
 
@@ -331,63 +324,109 @@ export class RelayEngine {
       outgoingEmbeds.push(buildCatboxEmbed('pending'));
     }
 
-    // 8. Enviar a Discord (preferentemente vía Webhook para impersonar usuario)
-    const discordMessageId = await deliverToDiscord(mapping, {
-      content: outgoingContent,
-      username,
-      avatarURL,
-      files,
-      embeds: outgoingEmbeds,
+    // 8. Enviar a cada canal (preferentemente vía Webhook para impersonar usuario).
+    // Un canal caído no impide la entrega a los demás.
+    const chatName = await Promise.resolve().then(() => whatsAppService.getChatName(jid)).catch(() => null);
+
+    // El enlace de una cita apunta al canal principal: en los demás se cambia por su propia copia o se quita.
+    const contentFor = (mapping, base) => {
+      if (!quote?.jumpUrl || mapping.id === primary.id) return base;
+      const copy = quote.copies.find((row) => Number(row.channel_mapping_id) === Number(mapping.id));
+      const target = copy?.discord_message_id
+        ? jumpUrl(this.guildIdOf(mapping), mapping.discord_channel_id, copy.discord_message_id)
+        : null;
+      return retargetQuoteLink(base, quote.jumpUrl, target);
+    };
+
+    const deliveries = await Promise.all(targets.map(async (mapping) => {
+      try {
+        const displayName = displayNameFor(mapping, username, chatName);
+        const discordMessageId = await deliverToDiscord(mapping, {
+          content: contentFor(mapping, outgoingContent),
+          username: displayName,
+          avatarURL,
+          files,
+          embeds: outgoingEmbeds,
+        });
+        if (!discordMessageId) return null;
+
+        // 9. Registrar una fila por vínculo para prevenir bucles, permitir citas y borrados
+        await messageMappingRepository.save({
+          waMessageId: messageId,
+          discordMessageId,
+          channelMappingId: mapping.id,
+          originPlatform: 'whatsapp',
+          senderName: username,
+          content: text || (files.length > 0 ? '[Multimedia]' : null),
+        });
+        return { mapping, discordMessageId, displayName };
+      } catch (err) {
+        console.error(`[RelayEngine] Error al reenviar a Discord (vínculo ${mapping.id}, canal ${mapping.discord_channel_id}):`, err.message);
+        return null;
+      }
+    }));
+    const delivered = deliveries.filter(Boolean);
+
+    // Espejos antiguos (tabla relay_mirrors), sin bloquear ni afectar al relay principal.
+    void mirrorService.forwardMessage(jid, chatName, {
+      content: outgoingContent, username, avatarURL, files, embeds: outgoingEmbeds,
     });
 
-    // Copiar a los canales espejo (otros servidores/canales) sin bloquear ni afectar al relay principal.
-    void Promise.resolve().then(() => whatsAppService.getChatName(jid)).catch(() => null).then((chatName) =>
-      mirrorService.forwardMessage(jid, chatName, {
-        content: outgoingContent, username, avatarURL, files, embeds: outgoingEmbeds,
-      }));
+    if (delivered.length === 0) return;
 
-    if (!discordMessageId) return;
-
-    // 9. Registrar mensaje en message_mappings para prevenir bucles, permitir citas y borrados
-    await messageMappingRepository.save({
-      waMessageId: messageId,
-      discordMessageId,
-      channelMappingId: mapping.id,
-      originPlatform: 'whatsapp',
-      senderName: username,
-      content: text || (files.length > 0 ? '[Multimedia]' : null),
-    });
-
-    // 10. Si el video continúa subiéndose en background, actualizar el mensaje de Discord al terminar
+    // 10. Si el video continúa subiéndose en background, actualizar cada copia en Discord al terminar
     if (timedOut && catboxUploadPromise) {
       const initialEmbeds = [...(embeds || [])];
       const baseContent = content || '';
+      const updateAll = (newContent, newEmbeds) => Promise.all(delivered.map(async ({ mapping, discordMessageId, displayName }) => {
+        try {
+          await updateDiscordMessage(mapping, discordMessageId, {
+            content: contentFor(mapping, newContent),
+            username: displayName,
+            embeds: newEmbeds,
+          });
+        } catch (editErr) {
+          console.error(`[RelayEngine] Error editando el mensaje ${discordMessageId} tras la subida a Catbox:`, editErr.message);
+        }
+      }));
 
       catboxUploadPromise
         .then(async (catboxUrl) => {
-          console.log(`🎬 [RelayEngine] Video subido a Catbox exitosamente: ${catboxUrl}. Editando mensaje en Discord (${discordMessageId})...`);
+          console.log(`🎬 [RelayEngine] Video subido a Catbox exitosamente: ${catboxUrl}. Editando ${delivered.length} mensaje(s) en Discord...`);
           const newContent = baseContent ? `${baseContent}\n${catboxUrl}` : catboxUrl;
-          const newEmbeds = [...initialEmbeds, buildCatboxEmbed('ready', { url: catboxUrl })];
-          await updateDiscordMessage(mapping, discordMessageId, {
-            content: newContent,
-            username,
-            embeds: newEmbeds,
-          });
+          await updateAll(newContent, [...initialEmbeds, buildCatboxEmbed('ready', { url: catboxUrl })]);
         })
         .catch(async (uploadErr) => {
           console.error('❌ [RelayEngine] Error al subir video a Catbox en segundo plano:', uploadErr.message);
-          const newEmbeds = [...initialEmbeds, buildCatboxEmbed('error', { error: uploadErr.message })];
-          try {
-            await updateDiscordMessage(mapping, discordMessageId, {
-              content: baseContent,
-              username,
-              embeds: newEmbeds,
-            });
-          } catch (editErr) {
-            console.error('[RelayEngine] Error editando mensaje tras fallo de subida a Catbox:', editErr.message);
-          }
+          await updateAll(baseContent, [...initialEmbeds, buildCatboxEmbed('error', { error: uploadErr.message })]);
         });
     }
+  }
+
+  /**
+   * Canales activos que reciben los mensajes de un chat. Si el chat no tiene canal en el
+   * servidor hub (DISCORD_GUILD_ID), lo crea; un espejo en otro servidor no cuenta.
+   * @param {string} jid
+   * @param {{ jid: string, pushName?: string|null, sender: string }} waData datos para nombrar el canal nuevo
+   * @returns {Promise<object[]>}
+   */
+  async resolveOutboundMappings(jid, waData) {
+    const mappings = await channelMappingRepository.getOutboundForJid(jid);
+    const hubGuildId = CONFIG.discord.guildId;
+    if (!hubGuildId || await channelMappingRepository.existsInGuild(jid, hubGuildId)) return mappings;
+    const created = await this.autoCreateMapping(waData);
+    if (!created || mappings.some((m) => m.id === created.id)) return mappings;
+    return [...mappings, created];
+  }
+
+  /** Servidor de Discord de un vínculo, para construir enlaces a sus mensajes. */
+  guildIdOf(mapping) {
+    if (mapping.discord_guild_id) return mapping.discord_guild_id;
+    if (CONFIG.discord.guildId) return CONFIG.discord.guildId;
+    const channel = discordService.isReady && discordService.client
+      ? discordService.client.channels.cache.get(mapping.discord_channel_id)
+      : null;
+    return channel?.guildId || '';
   }
 
   /**
@@ -400,7 +439,8 @@ export class RelayEngine {
     const channelId = discordMsg.channelId;
 
     // 1. Verificar si el canal de Discord está mapeado a un JID de WhatsApp
-    const mapping = await channelMappingRepository.getByDiscordChannelId(channelId);
+    // Un canal espejo (wa_to_dc) o pausado nunca escribe a WhatsApp.
+    const mapping = await channelMappingRepository.getInboundForChannel(channelId);
     if (!mapping) return;
     // Los antiguos dm-* tampoco pueden saltarse las respuestas explícitas de tickets.
     if (CONFIG.tickets.enabled && isPrivateJid(mapping.whatsapp_jid)) return;
@@ -448,26 +488,53 @@ export class RelayEngine {
     const { waMessageId, remoteJid } = deleteData;
     if (!waMessageId) return;
 
-    // 1. Buscar si tenemos registrado el mensaje en la base de datos
-    const logEntry = await messageMappingRepository.getByWaMessageId(waMessageId);
-    if (!logEntry || !logEntry.discord_message_id) {
-      return;
+    // 1. Todas las copias del mensaje en Discord (una por vínculo)
+    const copies = (await messageMappingRepository.getAllByWaMessageId(waMessageId)).filter((row) => row.discord_message_id);
+    if (copies.length === 0) return;
+
+    const globalSettings = await settingsRepository.get(GLOBAL_SETTINGS_KEY).catch(() => null);
+
+    for (const copy of copies) {
+      // 2. Obtener el vínculo de cada copia
+      let mapping = null;
+      if (copy.channel_mapping_id) {
+        mapping = await channelMappingRepository.getById(copy.channel_mapping_id);
+      } else if (remoteJid) {
+        mapping = await channelMappingRepository.getByWhatsAppJid(remoteJid);
+      }
+      if (!mapping || mapping.enabled === 0 || mapping.enabled === false) continue;
+
+      try {
+        await this.applyWhatsAppDelete(mapping, copy, resolveSetting('on_delete', mapping, globalSettings));
+      } catch (err) {
+        console.error(`[RelayEngine] Error aplicando la eliminación en el canal ${mapping.discord_channel_id}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Refleja en un canal de Discord que el mensaje se eliminó en WhatsApp.
+   * @param {object} mapping
+   * @param {{ discord_message_id: string, origin_platform: string, wa_message_id: string }} copy
+   * @param {'mark'|'delete'|'ignore'} mode ajuste on_delete del vínculo
+   */
+  async applyWhatsAppDelete(mapping, copy, mode) {
+    if (mode === 'ignore') return;
+    const discordMessageId = copy.discord_message_id;
+
+    // Solo se borran los mensajes que publicó el relay; el de un usuario de Discord se deja y se avisa.
+    if (mode === 'delete' && copy.origin_platform === 'whatsapp') {
+      try {
+        if (mapping.webhook_url) await discordService.deleteWebhookMessage(mapping.webhook_url, discordMessageId);
+        else await discordService.deleteChannelMessage(mapping.discord_channel_id, discordMessageId);
+        console.log(`🗑️ [RelayEngine] Mensaje ${discordMessageId} borrado en Discord (eliminado en WhatsApp).`);
+        return;
+      } catch (err) {
+        console.warn(`⚠️ [RelayEngine] No se pudo borrar el mensaje ${discordMessageId} en Discord: ${err.message}. Se marca como eliminado.`);
+      }
     }
 
-    const discordMessageId = logEntry.discord_message_id;
-
-    // 2. Obtener el mapeo correspondiente
-    let mapping = null;
-    if (logEntry.channel_mapping_id) {
-      mapping = await channelMappingRepository.getById(logEntry.channel_mapping_id);
-    }
-    if (!mapping && remoteJid) {
-      mapping = await channelMappingRepository.getByWhatsAppJid(remoteJid);
-    }
-
-    if (!mapping) return;
-
-    console.log(`🗑️ [RelayEngine] Notificando eliminación en Discord para mensaje WA ${waMessageId} (DC ${discordMessageId})...`);
+    console.log(`🗑️ [RelayEngine] Notificando eliminación en Discord para mensaje WA ${copy.wa_message_id} (DC ${discordMessageId})...`);
 
     const deletedEmbed = new EmbedBuilder()
       .setColor(0x95a5a6)
@@ -511,6 +578,14 @@ export class RelayEngine {
    * @returns {Promise<object|null>}
    */
   async autoCreateMapping(waData) {
+    const inFlight = this.autoCreating.get(waData.jid);
+    if (inFlight) return inFlight;
+    const creation = this.createMappingChannel(waData).finally(() => this.autoCreating.delete(waData.jid));
+    this.autoCreating.set(waData.jid, creation);
+    return creation;
+  }
+
+  async createMappingChannel(waData) {
     const { jid, pushName, sender } = waData;
 
     try {
@@ -563,11 +638,12 @@ export class RelayEngine {
         jid,
         created.channel.id,
         created.webhook ? created.webhook.url : null,
-        created.webhook ? created.webhook.id : null
+        created.webhook ? created.webhook.id : null,
+        created.channel.guildId || CONFIG.discord.guildId
       );
 
       // 4. Leer el mapeo recién creado para devolver el objeto completo
-      const mapping = await channelMappingRepository.getByWhatsAppJid(jid);
+      const mapping = await channelMappingRepository.getByPair(jid, created.channel.id);
 
       console.log(`✅ [RelayEngine] Mapeo guardado exitosamente en BD: [${jid} <-> #${created.channel.name}] (ID: ${mapping?.id})`);
       return mapping;
@@ -622,17 +698,13 @@ export class RelayEngine {
     this.recentGroupEvents.add(dedupKey);
     setTimeout(() => this.recentGroupEvents.delete(dedupKey), 30000);
 
-    // 1. Obtener o auto-crear mapeo del canal de Discord para este grupo
-    let mapping = await channelMappingRepository.getByWhatsAppJid(groupJid);
-    if (!mapping && CONFIG.discord.guildId) {
-      mapping = await this.autoCreateMapping({
-        jid: groupJid,
-        pushName: null,
-        sender: author || participant,
-      });
-    }
-
-    if (!mapping) return;
+    // 1. Canales de Discord de este grupo (se crea el del servidor hub si falta)
+    const mappings = await this.resolveOutboundMappings(groupJid, {
+      jid: groupJid,
+      pushName: null,
+      sender: author || participant,
+    });
+    if (mappings.length === 0) return;
 
     // 2. Obtener metadatos del grupo
     const groupName = (await whatsAppService.getChatName(groupJid)) || 'Grupo de WhatsApp';
@@ -697,10 +769,10 @@ export class RelayEngine {
     );
 
     // 8. Entregar a Discord
-    await deliverSystemEmbed(mapping, embed, {
+    await Promise.all(mappings.map((mapping) => deliverSystemEmbed(mapping, embed, {
       name: groupName,
       avatarUrl: groupAvatarUrl,
-    });
+    })));
     void mirrorService.forwardEmbed(groupJid, embed, { name: groupName, avatarUrl: groupAvatarUrl });
   }
 

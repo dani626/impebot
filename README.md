@@ -93,10 +93,11 @@ Para vincular un grupo de WhatsApp a un canal de Discord:
 3. Inserta el registro en MariaDB:
 
 ```sql
-INSERT INTO channel_mappings (whatsapp_jid, discord_channel_id, webhook_url)
+INSERT INTO channel_mappings (whatsapp_jid, discord_channel_id, discord_guild_id, webhook_url)
 VALUES (
   '120363028123456789@g.us',
   '123456789012345678',
+  '987654321098765432', -- ID del servidor de Discord del canal
   'https://discord.com/api/webhooks/123456789012345678/xxxxxx'
 );
 ```

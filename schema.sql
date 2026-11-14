@@ -3,16 +3,26 @@
 CREATE DATABASE IF NOT EXISTS `relay_bot` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE `relay_bot`;
 
--- 1. Tabla de Mapeo de Canales / Grupos
+-- 1. Vínculos grupo de WhatsApp ↔ canal de Discord (ver src/database/relaySchema.js)
+-- Un grupo puede ir a varios canales; un canal solo puede tener un vínculo hacia WhatsApp (uk_inbound).
 CREATE TABLE IF NOT EXISTS `channel_mappings` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `whatsapp_jid` VARCHAR(128) NOT NULL,
   `discord_channel_id` VARCHAR(64) NOT NULL,
+  `discord_guild_id` VARCHAR(64) NOT NULL DEFAULT '',
+  `alias` VARCHAR(64) DEFAULT NULL,
+  `direction` ENUM('both','wa_to_dc','dc_to_wa') NOT NULL DEFAULT 'both',
+  `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+  `settings` JSON DEFAULT NULL,
   `webhook_url` TEXT DEFAULT NULL,
   `webhook_id` VARCHAR(64) DEFAULT NULL,
+  `created_by` VARCHAR(64) DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY `uk_whatsapp_jid` (`whatsapp_jid`),
+  `inbound_channel` VARCHAR(64) GENERATED ALWAYS AS (CASE WHEN `direction` <> 'wa_to_dc' THEN `discord_channel_id` ELSE NULL END) STORED,
+  UNIQUE KEY `uk_pair` (`whatsapp_jid`, `discord_channel_id`),
+  UNIQUE KEY `uk_alias` (`alias`),
+  UNIQUE KEY `uk_inbound` (`inbound_channel`),
   INDEX `idx_discord_channel_id` (`discord_channel_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -39,7 +49,8 @@ CREATE TABLE IF NOT EXISTS `message_mappings` (
   `sender_name` VARCHAR(128) DEFAULT NULL,
   `content` TEXT DEFAULT NULL,
   `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX `idx_wa_message_id` (`wa_message_id`),
+  UNIQUE KEY `uk_mapping_wa` (`channel_mapping_id`, `wa_message_id`),
+  INDEX `idx_wa_message_id` (`wa_message_id`, `channel_mapping_id`),
   INDEX `idx_discord_message_id` (`discord_message_id`),
   INDEX `idx_origin_platform` (`origin_platform`),
   INDEX `idx_created_at` (`created_at`),

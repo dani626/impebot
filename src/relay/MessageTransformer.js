@@ -44,7 +44,7 @@ export class MessageTransformer {
   /**
    * Transforma un mensaje entrante de WhatsApp al formato de Discord.
    * @param {object} waMessageData Datos del mensaje de WhatsApp emitidos por WhatsAppService
-   * @param {{ channelId?: string, guildId?: string }} [contextOptions={}] Opciones de canal/servidor de Discord
+   * @param {{ channelId?: string, guildId?: string, mappingId?: number }} [contextOptions={}] Canal/servidor de Discord y vínculo de destino
    * @returns {Promise<{ content: string, files: AttachmentBuilder[], embeds: EmbedBuilder[] }>}
    */
   static async toDiscord(waMessageData, contextOptions = {}) {
@@ -52,6 +52,8 @@ export class MessageTransformer {
     const message = rawMessage.message;
     const files = [];
     let content = text || '';
+    /** Copias del mensaje citado y enlace usado, para adaptar la cita a otros canales de destino. */
+    let quote = null;
 
     // Manejo de respuesta citada (quoted context)
     const contextInfo = getContextInfo(message);
@@ -65,11 +67,16 @@ export class MessageTransformer {
       const stanzaId = contextInfo.stanzaId;
       if (stanzaId && contextOptions.channelId) {
         try {
-          const logEntry = await messageMappingRepository.getByWaMessageId(stanzaId);
+          // Con varios canales por chat, el enlace debe apuntar a la copia del canal de destino.
+          const copies = await messageMappingRepository.getAllByWaMessageId(stanzaId);
+          const logEntry = contextOptions.mappingId
+            ? copies.find((row) => Number(row.channel_mapping_id) === Number(contextOptions.mappingId))
+            : copies.at(-1);
           if (logEntry?.discord_message_id) {
             const guildId = contextOptions.guildId || CONFIG.discord.guildId || '@me';
             jumpUrl = `https://discord.com/channels/${guildId}/${contextOptions.channelId}/${logEntry.discord_message_id}`;
           }
+          quote = { copies, jumpUrl };
         } catch {
           // Ignorar error al buscar registro
         }
@@ -142,7 +149,7 @@ export class MessageTransformer {
       embeds.push(embed);
     }
 
-    return { content: content.trim(), files, embeds, pendingCatboxVideo };
+    return { content: content.trim(), files, embeds, pendingCatboxVideo, quote };
   }
 
   /**
