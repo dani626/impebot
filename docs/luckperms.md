@@ -41,10 +41,11 @@ node scripts/luckperms-add-context.mjs antes.json.gz contexto.json.gz lobby
 2. **Antes de activarlo**, dar los permisos básicos a todos, o nadie podrá usar el bot:
 
    ```
-   /lp group default permission set impebot.sticker true
-   /lp group default permission set impebot.help true
+   /lp group default permission set impebot.whatsapp.sticker true
+   /lp group default permission set impebot.whatsapp.help true
+   /lp group default permission set impebot.whatsapp.account true
+   /lp group default permission set impebot.whatsapp.tickets.use true
    /lp group default permission set impebot.account true
-   /lp group default permission set impebot.tickets.use true
    /lp group default permission set impebot.music.* true
    ```
 
@@ -121,20 +122,24 @@ Los comandos de Discord se registran en `DISCORD_GUILD_ID`. Para que la música 
 
 ## Permisos
 
+Los permisos de WhatsApp empiezan por `impebot.whatsapp.`. Los de Discord mantienen su nombre (`impebot.music.*`, `impebot.tickets.staff`, `impebot.diagnose`, `impebot.relay.mirror`, `impebot.account`, `impebot.link.admin`) y, si más adelante se separan, irán bajo `impebot.discord.`.
+
 | Permiso | Comandos | Sin LuckPerms |
 |---|---|---|
 | — | `!vincular`, `!verificar`, `!link`, `!verify` | siempre libre |
-| `impebot.sticker` | `!s`, `!scrop`, `!scircle`, `!sround` | libre |
-| `impebot.help` | `!help` | libre |
-| `impebot.account` | `!mc`, `/minecraft info` | libre |
-| `impebot.tickets.use` | `!ticket`, `!tickets`, `!responder`, `!cerrar`, `!cancelar` | libre |
-| `impebot.presence` | `!presence`, `!online`, `!offline` | solo `WA_STAFF_IDS` |
-| `impebot.link.admin` | `!forzarvinculo`, `!quitarvinculo`, `/minecraft vincular/desvincular` | `WA_STAFF_IDS` / Gestionar servidor |
-| `impebot.moderation.delete` | `!borrar` | admins del grupo |
-| `impebot.moderation.ban` | `!ban`, `!desban`, `!bans` | admins del grupo |
-| `impebot.moderation.kick` | `!kick` | admins del grupo |
-| `impebot.moderation.warn` | `!warn`, `!warns`, `!unwarn` | admins del grupo |
-| `impebot.moderation.exempt` | no se le puede sancionar | — |
+| `impebot.whatsapp.sticker` | `!s`, `!scrop`, `!scircle`, `!sround` | libre |
+| `impebot.whatsapp.help` | `!help` | libre |
+| `impebot.whatsapp.account` | `!mc` | libre |
+| `impebot.account` | `/minecraft info` (Discord) | libre |
+| `impebot.whatsapp.tickets.use` | `!ticket`, `!tickets`, `!responder`, `!cerrar`, `!cancelar` | libre |
+| `impebot.whatsapp.presence` | `!presence`, `!online`, `!offline` | solo `WA_STAFF_IDS` |
+| `impebot.whatsapp.link.admin` | `!forzarvinculo`, `!quitarvinculo` | `WA_STAFF_IDS` |
+| `impebot.link.admin` | `/minecraft vincular/desvincular` (Discord) | Gestionar servidor |
+| `impebot.whatsapp.moderation.delete` | `!borrar` | admins del grupo |
+| `impebot.whatsapp.moderation.ban` | `!ban`, `!desban`, `!bans` | admins del grupo |
+| `impebot.whatsapp.moderation.kick` | `!kick` | admins del grupo |
+| `impebot.whatsapp.moderation.warn` | `!warn`, `!warns`, `!unwarn` | admins del grupo |
+| `impebot.whatsapp.moderation.exempt` | no se le puede sancionar | — |
 | — (libre, sin vincular) | `/play`. `impebot.music.play = false` se lo quita a alguien vinculado | libre |
 | `impebot.music.control` | `/skip`, `/stop`, `/pause`, `/resume`, `/volumen` y botones | libre |
 | `impebot.music.queue` | `/cola` y botón de cola | libre |
@@ -146,17 +151,17 @@ Reglas con LuckPerms activo:
 
 - Hace falta `true`. Sin permiso, o sin cuenta vinculada, el comando se rechaza (y si no está vinculado, el bot le explica cómo hacerlo).
 - Ser admin del grupo de WhatsApp o tener el rol de Discord ya **no basta**: hace falta el permiso.
-- Se aplican herencia de grupos, pesos, comodines (`impebot.moderation.*`, `impebot.*`, `*`) y permisos temporales.
+- Se aplican herencia de grupos, pesos, comodines (`impebot.whatsapp.*`, `impebot.whatsapp.moderation.*`, `impebot.*`, `*`) y permisos temporales.
 - Solo cuentan los permisos globales o con `server=` de `LUCKPERMS_SERVERS`. Los de mundos concretos u otros contextos se ignoran.
 
 Ejemplos:
 
 ```
-/lp group mod permission set impebot.moderation.* true
-/lp group helper permission set impebot.moderation.warn true
-/lp group admin permission set impebot.presence true
-/lp group admin permission set impebot.link.admin true
+/lp group mod permission set impebot.whatsapp.moderation.* true
+/lp group helper permission set impebot.whatsapp.moderation.warn true
+/lp group admin permission set impebot.whatsapp.presence true
+/lp group admin permission set impebot.whatsapp.link.admin true
 /lp group helper permission set impebot.tickets.staff true
 /lp user Troll permission set impebot.music.play false
-/lp user Steve permission settemp impebot.moderation.kick true 7d
+/lp user Steve permission settemp impebot.whatsapp.moderation.kick true 7d
 ```

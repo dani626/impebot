@@ -15,12 +15,12 @@ const OPTS = { servers: ['impebot'], now: 1_000_000 };
 
 // Grupos parecidos a los de la red: default ← helper ← mod ← admin
 const GROUPS = indexGroups([
-  gnode('default', 'impebot.sticker'),
-  gnode('helper', 'group.default'), gnode('helper', 'weight.10'), gnode('helper', 'impebot.moderation.warn'),
-  gnode('mod', 'group.helper'), gnode('mod', 'weight.50'), gnode('mod', 'impebot.moderation.*'),
-  gnode('mod', 'impebot.moderation.ban', { value: 0 }),
-  gnode('admin', 'group.mod'), gnode('admin', 'weight.100'), gnode('admin', 'impebot.moderation.ban'),
-  gnode('survi', 'impebot.presence', { server: 'survivalop' }),
+  gnode('default', 'impebot.whatsapp.sticker'),
+  gnode('helper', 'group.default'), gnode('helper', 'weight.10'), gnode('helper', 'impebot.whatsapp.moderation.warn'),
+  gnode('mod', 'group.helper'), gnode('mod', 'weight.50'), gnode('mod', 'impebot.whatsapp.moderation.*'),
+  gnode('mod', 'impebot.whatsapp.moderation.ban', { value: 0 }),
+  gnode('admin', 'group.mod'), gnode('admin', 'weight.100'), gnode('admin', 'impebot.whatsapp.moderation.ban'),
+  gnode('survi', 'impebot.whatsapp.presence', { server: 'survivalop' }),
   gnode('owner', '*'),
 ]);
 
@@ -29,29 +29,29 @@ const perms = (userRows) => buildPermissionMap(userRows, GROUPS, OPTS);
 test('herencia de grupos, comodines y negación como en LuckPerms', () => {
   const mod = perms([node('group.mod')]);
   assert.deepEqual(mod.groups, ['mod', 'helper', 'default']);
-  assert.equal(checkPermission(mod.permissions, 'impebot.moderation.kick'), true, 'comodín impebot.moderation.*');
-  assert.equal(checkPermission(mod.permissions, 'impebot.moderation.ban'), false, 'false exacto gana al comodín');
-  assert.equal(checkPermission(mod.permissions, 'impebot.sticker'), true, 'heredado de default');
-  assert.equal(checkPermission(mod.permissions, 'impebot.presence'), undefined);
+  assert.equal(checkPermission(mod.permissions, 'impebot.whatsapp.moderation.kick'), true, 'comodín impebot.whatsapp.moderation.*');
+  assert.equal(checkPermission(mod.permissions, 'impebot.whatsapp.moderation.ban'), false, 'false exacto gana al comodín');
+  assert.equal(checkPermission(mod.permissions, 'impebot.whatsapp.sticker'), true, 'heredado de default');
+  assert.equal(checkPermission(mod.permissions, 'impebot.whatsapp.presence'), undefined);
 
   const admin = perms([node('group.admin')]);
-  assert.equal(checkPermission(admin.permissions, 'impebot.moderation.ban'), true, 'el grupo más cercano manda');
+  assert.equal(checkPermission(admin.permissions, 'impebot.whatsapp.moderation.ban'), true, 'el grupo más cercano manda');
 
   const owner = perms([node('group.owner')]);
   assert.equal(checkPermission(owner.permissions, 'cualquier.cosa'), true, '* lo permite todo');
 });
 
 test('los permisos propios ganan a los heredados y el grupo de mayor peso va primero', () => {
-  const own = perms([node('group.admin'), node('impebot.moderation.ban', { value: 0 })]);
-  assert.equal(checkPermission(own.permissions, 'impebot.moderation.ban'), false);
+  const own = perms([node('group.admin'), node('impebot.whatsapp.moderation.ban', { value: 0 })]);
+  assert.equal(checkPermission(own.permissions, 'impebot.whatsapp.moderation.ban'), false);
 
   // helper (peso 10) da warn=true; un grupo de más peso que lo niega debe ganar.
   const groups = indexGroups([
-    gnode('helper', 'weight.10'), gnode('helper', 'impebot.moderation.warn'),
-    gnode('castigado', 'weight.90'), gnode('castigado', 'impebot.moderation.warn', { value: 0 }),
+    gnode('helper', 'weight.10'), gnode('helper', 'impebot.whatsapp.moderation.warn'),
+    gnode('castigado', 'weight.90'), gnode('castigado', 'impebot.whatsapp.moderation.warn', { value: 0 }),
   ]);
   const both = buildPermissionMap([node('group.helper'), node('group.castigado')], groups, OPTS);
-  assert.equal(checkPermission(both.permissions, 'impebot.moderation.warn'), false);
+  assert.equal(checkPermission(both.permissions, 'impebot.whatsapp.moderation.warn'), false);
 });
 
 test('se ignoran permisos caducados, de otros servidores, mundos o contextos extra', () => {
@@ -64,15 +64,15 @@ test('se ignoran permisos caducados, de otros servidores, mundos o contextos ext
   assert.equal(isNodeActive(node('x', { contexts: '{"gamemode":["creative"]}' }), OPTS), false);
 
   const survi = perms([node('group.survi')]);
-  assert.equal(checkPermission(survi.permissions, 'impebot.presence'), undefined, 'solo vale en survivalop');
+  assert.equal(checkPermission(survi.permissions, 'impebot.whatsapp.presence'), undefined, 'solo vale en survivalop');
   const withSurvi = buildPermissionMap([node('group.survi')], GROUPS, { ...OPTS, servers: ['impebot', 'survivalop'] });
-  assert.equal(checkPermission(withSurvi.permissions, 'impebot.presence'), true);
+  assert.equal(checkPermission(withSurvi.permissions, 'impebot.whatsapp.presence'), true);
 });
 
 test('un jugador sin grupos hereda default', () => {
   const nobody = perms([]);
   assert.deepEqual(nobody.groups, ['default']);
-  assert.equal(checkPermission(nobody.permissions, 'impebot.sticker'), true);
+  assert.equal(checkPermission(nobody.permissions, 'impebot.whatsapp.sticker'), true);
 });
 
 test('formato de meta y de avisos del messaging service', () => {
@@ -137,7 +137,7 @@ function fakeDb() {
       { uuid: UUID, ...node('group.mod') },
       { uuid: UUID, ...node('meta.whatsapp.51987654321') },
     ],
-    groups: [gnode('mod', 'impebot.moderation.*'), gnode('default', 'impebot.sticker')],
+    groups: [gnode('mod', 'impebot.whatsapp.moderation.*'), gnode('default', 'impebot.whatsapp.sticker')],
     players: [{ uuid: UUID, username: 'steve', primary_group: 'mod' }, { uuid: OTHER, username: 'alex', primary_group: 'default' }],
     messenger: [],
     queries: 0,
@@ -187,11 +187,11 @@ test('reconoce al jugador por su número (o LID) y calcula su permiso', async ()
   const { db, pool } = fakeDb();
   const { lp } = service(db, pool);
   await lp.start();
-  const res = await lp.check('whatsapp', ['51987654321@s.whatsapp.net', '777@lid'], 'impebot.moderation.ban');
+  const res = await lp.check('whatsapp', ['51987654321@s.whatsapp.net', '777@lid'], 'impebot.whatsapp.moderation.ban');
   assert.equal(res.result, true);
   assert.equal(res.player.username, 'steve');
   assert.equal(res.available, true);
-  const stranger = await lp.check('whatsapp', ['5100000000@s.whatsapp.net'], 'impebot.moderation.ban');
+  const stranger = await lp.check('whatsapp', ['5100000000@s.whatsapp.net'], 'impebot.whatsapp.moderation.ban');
   assert.deepEqual(stranger, { result: undefined, player: null, available: true });
 });
 
@@ -199,16 +199,16 @@ test('usa caché y la borra al recibir un aviso de la red', async () => {
   const { db, pool } = fakeDb();
   const { lp } = service(db, pool);
   await lp.start();
-  await lp.check('whatsapp', ['51987654321'], 'impebot.moderation.ban');
+  await lp.check('whatsapp', ['51987654321'], 'impebot.whatsapp.moderation.ban');
   const before = db.queries;
-  await lp.check('whatsapp', ['51987654321'], 'impebot.moderation.ban');
+  await lp.check('whatsapp', ['51987654321'], 'impebot.whatsapp.moderation.ban');
   assert.equal(db.queries, before, 'segunda consulta sale de la caché');
 
   // Otro servidor quita el rango y avisa.
   db.users = db.users.filter((u) => u.permission !== 'group.mod');
   db.messenger.push({ id: 1, msg: encodeMessengerMessage('x1', 'userupdate', { userUuid: UUID }) });
   await lp.pollMessenger();
-  const res = await lp.check('whatsapp', ['51987654321'], 'impebot.moderation.ban');
+  const res = await lp.check('whatsapp', ['51987654321'], 'impebot.whatsapp.moderation.ban');
   assert.equal(res.result, undefined, 'ya no tiene el permiso');
 });
 
@@ -216,10 +216,10 @@ test('la caché caduca aunque se pierda un aviso', async () => {
   const { db, pool } = fakeDb();
   const { lp, advance } = service(db, pool);
   await lp.start();
-  await lp.check('whatsapp', ['51987654321'], 'impebot.moderation.ban');
+  await lp.check('whatsapp', ['51987654321'], 'impebot.whatsapp.moderation.ban');
   db.users = db.users.filter((u) => u.permission !== 'group.mod');
   advance(61000);
-  assert.equal((await lp.check('whatsapp', ['51987654321'], 'impebot.moderation.ban')).result, undefined);
+  assert.equal((await lp.check('whatsapp', ['51987654321'], 'impebot.whatsapp.moderation.ban')).result, undefined);
 });
 
 test('vincular guarda la meta, se la quita a otro jugador y avisa a la red', async () => {
@@ -291,11 +291,11 @@ function moderation(permissions) {
   return { ban, sent };
 }
 
-test('un miembro con impebot.moderation.ban en LuckPerms puede banear', async () => {
+test('un miembro con impebot.whatsapp.moderation.ban en LuckPerms puede banear', async () => {
   const asked = [];
   const { ban } = moderation(async (ids, n) => {
     asked.push([ids, n]);
-    return lpOn(n === 'impebot.moderation.ban' && ids.includes('56922222222@s.whatsapp.net') ? true : undefined);
+    return lpOn(n === 'impebot.whatsapp.moderation.ban' && ids.includes('56922222222@s.whatsapp.net') ? true : undefined);
   });
   assert.equal((await ban('222', '333')).status, 'ok');
   assert.ok(asked[0][0].includes('56922222222@s.whatsapp.net'), 'se consulta también el número, no solo el LID');
@@ -312,9 +312,9 @@ test('si LuckPerms no responde, los admins del grupo siguen moderando', async ()
   assert.equal((await moderation(async () => ({ available: false })).ban('222', '333')).status, 'denegado');
 });
 
-test('impebot.moderation.exempt protege al objetivo', async () => {
+test('impebot.whatsapp.moderation.exempt protege al objetivo', async () => {
   const { ban, sent } = moderation(async (ids, n) => {
-    if (n === 'impebot.moderation.exempt') return lpOn(ids.includes('333@lid') || undefined);
+    if (n === 'impebot.whatsapp.moderation.exempt') return lpOn(ids.includes('333@lid') || undefined);
     return lpOn(true);
   });
   assert.equal((await ban('111', '333')).status, 'denegado');

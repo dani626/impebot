@@ -31,6 +31,8 @@ export class DiscordService extends EventEmitter {
     this.commandWaiters = [];
     this.commandTimer = null;
     this.commandDelayMs = 1500;
+    /** Últimos nombres de comandos vistos por servidor, para registrar qué cambió y cuándo. */
+    this.commandSnapshot = new Map();
   }
 
   /**
@@ -247,12 +249,15 @@ export class DiscordService extends EventEmitter {
         const foreign = [];
         try {
           const existing = await guild.commands.fetch();
+          this.logCommandChanges(guild, [...(existing?.values?.() ?? [])].map((c) => c.name));
           for (const c of existing?.values?.() ?? []) {
             if (!byName.has(c.name)) foreign.push({ name: c.name, description: c.description, options: c.options, defaultMemberPermissions: c.defaultMemberPermissions, dmPermission: c.dmPermission });
           }
         } catch { /* sin lectura previa se registran solo los propios */ }
         await guild.commands.set([...byName.values(), ...foreign]);
-        console.log(`✅ [Discord] ${byName.size} comandos registrados en ${guild.name}.`);
+        const extra = foreign.length ? ` (conserva ${foreign.length} ajenos: ${foreign.map((c) => `/${c.name}`).join(', ')})` : '';
+        console.log(`✅ [Discord] ${byName.size} comandos registrados en ${guild.name}${extra}.`);
+        this.commandSnapshot.set(guild.id, new Set([...byName.keys(), ...foreign.map((c) => c.name)]));
       } catch (err) {
         if (guildId === CONFIG.discord.guildId) mainError = err;
         else errors.push(`${guildId}: ${err.message}`);
@@ -265,20 +270,36 @@ export class DiscordService extends EventEmitter {
     }
   }
 
+  /** Compara los comandos del servidor con la última lista vista y registra qué se añadió o quitó. */
+  logCommandChanges(guild, names) {
+    const now = new Set(names);
+    const before = this.commandSnapshot.get(guild.id);
+    this.commandSnapshot.set(guild.id, now);
+    if (!before) return;
+    const added = [...now].filter((n) => !before.has(n));
+    const removed = [...before].filter((n) => !now.has(n));
+    if (!added.length && !removed.length) return;
+    const list = (a) => a.map((n) => `/${n}`).join(', ') || '—';
+    console.warn(`⚠️ [Discord] Los comandos de ${guild.name} cambiaron desde fuera del bot (otra aplicación o plugin que usa el mismo bot, p. ej. DiscordSRV): añadidos: ${list(added)}; quitados: ${list(removed)}. Ahora hay ${now.size}: ${list([...now].sort())}`);
+  }
+
   /** Si otra herramienta (DiscordSRV) borra nuestros comandos, los vuelve a registrar. */
   startCommandWatchdog(intervalMs = 10 * 60 * 1000) {
     clearInterval(this.commandWatchdog);
     this.commandWatchdog = setInterval(async () => {
       try {
+        let missingIn = null;
         for (const [guildId, byName] of this.commandRegistry) {
           const guild = await this.client.guilds.fetch(guildId);
           const present = await guild.commands.fetch();
-          if ([...byName.keys()].some((n) => !present.some((c) => c.name === n))) {
-            console.warn(`⚠️ [Discord] Faltan comandos en ${guild.name}; se registran de nuevo.`);
-            await this.flushCommands();
-            return;
+          this.logCommandChanges(guild, [...present.values()].map((c) => c.name));
+          const missing = [...byName.keys()].filter((n) => !present.some((c) => c.name === n));
+          if (missing.length && !missingIn) {
+            missingIn = true;
+            console.warn(`⚠️ [Discord] Faltan ${missing.length} comandos del bot en ${guild.name} (${missing.slice(0, 8).map((n) => `/${n}`).join(', ')}${missing.length > 8 ? '…' : ''}); se registran de nuevo.`);
           }
         }
+        if (missingIn) await this.flushCommands();
       } catch (err) {
         console.error(`⚠️ [Discord] Revisión de comandos falló: ${err.message}`);
       }

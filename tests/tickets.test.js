@@ -267,7 +267,7 @@ test('con LuckPerms, !vincular no exige permiso y activa el rango; !ticket sí l
   const linkedAccounts = [];
   let linkedPlayer = null;
   f.backend.link = async (who, code) => { f.state.mutations.push({ action: 'link', who, code }); return { username: 'Steve' }; };
-  f.service.permissions = async (platform, ids, node) => ({ available: true, player: linkedPlayer, result: linkedPlayer ? node === 'impebot.tickets.use' : undefined });
+  f.service.permissions = async (platform, ids, node) => ({ available: true, player: linkedPlayer, result: linkedPlayer ? node === 'impebot.whatsapp.tickets.use' : undefined });
   f.service.onLinked = async (account) => {
     linkedAccounts.push(account);
     linkedPlayer = { uuid: 'u', username: 'steve', primaryGroup: 'vip' };

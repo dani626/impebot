@@ -13,17 +13,21 @@
  * WA_STAFF_IDS siempre puede usarlo todo (acceso de emergencia).
  */
 export const PERMISSIONS = {
-  sticker: { node: 'impebot.sticker', open: true },
-  help: { node: 'impebot.help', open: true },
+  // WhatsApp: impebot.whatsapp.*   (Discord tendrá los suyos aparte; los de Discord no cambian)
+  sticker: { node: 'impebot.whatsapp.sticker', open: true },
+  help: { node: 'impebot.whatsapp.help', open: true },
+  whatsappAccount: { node: 'impebot.whatsapp.account', open: true },
+  presence: { node: 'impebot.whatsapp.presence' },
+  whatsappLinkAdmin: { node: 'impebot.whatsapp.link.admin' },
+  moderationDelete: { node: 'impebot.whatsapp.moderation.delete' },
+  moderationBan: { node: 'impebot.whatsapp.moderation.ban' },
+  moderationKick: { node: 'impebot.whatsapp.moderation.kick' },
+  moderationWarn: { node: 'impebot.whatsapp.moderation.warn' },
+  moderationExempt: { node: 'impebot.whatsapp.moderation.exempt' },
+  ticketsUse: { node: 'impebot.whatsapp.tickets.use', open: true },
+  // Discord (sin cambios)
   account: { node: 'impebot.account', open: true },
-  presence: { node: 'impebot.presence' },
   linkAdmin: { node: 'impebot.link.admin' },
-  moderationDelete: { node: 'impebot.moderation.delete' },
-  moderationBan: { node: 'impebot.moderation.ban' },
-  moderationKick: { node: 'impebot.moderation.kick' },
-  moderationWarn: { node: 'impebot.moderation.warn' },
-  moderationExempt: { node: 'impebot.moderation.exempt' },
-  ticketsUse: { node: 'impebot.tickets.use', open: true },
   ticketsStaff: { node: 'impebot.tickets.staff' },
   // De momento /play es libre: no exige vincular la cuenta ni permiso. impebot.music.play = false se lo quita a alguien.
   musicPlay: { node: 'impebot.music.play', open: true, free: true },
@@ -46,9 +50,9 @@ export const WHATSAPP_COMMAND_PERMISSIONS = {
   presence: PERMISSIONS.presence,
   online: PERMISSIONS.presence,
   offline: PERMISSIONS.presence,
-  mc: PERMISSIONS.account,
-  mcvincular: PERMISSIONS.linkAdmin,
-  mcdesvincular: PERMISSIONS.linkAdmin,
+  mc: PERMISSIONS.whatsappAccount,
+  mcvincular: PERMISSIONS.whatsappLinkAdmin,
+  mcdesvincular: PERMISSIONS.whatsappLinkAdmin,
   borrar: PERMISSIONS.moderationDelete,
   ban: PERMISSIONS.moderationBan,
   desban: PERMISSIONS.moderationBan,
