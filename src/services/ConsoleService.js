@@ -141,6 +141,7 @@ export class ConsoleService {
   /**
    * avisos list
    * avisos add <ID@g.us> [alias]    → añade un grupo por su ID
+   * avisos add <ID canal Discord>  → toma el grupo de WhatsApp vinculado a ese canal (relay)
    * avisos add <nombre del grupo>   → busca el grupo por nombre entre los de WhatsApp
    * avisos remove <alias|ID>        → lo quita
    */
@@ -150,7 +151,7 @@ export class ConsoleService {
     if (sub === 'list' || sub === 'lista') {
       const rows = await linkHintService.list();
       if (!rows.length) {
-        console.log('ℹ️ [Avisos] No hay grupos. Usa: avisos add <ID@g.us | nombre del grupo> [alias]');
+        console.log('ℹ️ [Avisos] No hay grupos. Usa: avisos add <ID@g.us | ID canal Discord | nombre del grupo> [alias]');
         return;
       }
       console.log(`📋 [Avisos] Grupos donde se avisa de que falta vincular (comandos: ${CONFIG.linkHint.commands.join(', ')}):`);
@@ -164,7 +165,26 @@ export class ConsoleService {
       }
       let jid;
       let alias;
-      if (isGroupJid(rest[0])) {
+      const channelId = /^(?:<#)?(\d{17,20})>?$/.exec(rest[0])?.[1];
+      if (channelId) {
+        // ID (o mención) de un canal de Discord vinculado por el relay: de ahí sale el grupo de WhatsApp.
+        if (!dbService.isConnected) {
+          console.log('❌ [Avisos] MariaDB no está conectada: no puedo leer los canales vinculados.');
+          return;
+        }
+        const mapping = await channelMappingRepository.getByDiscordChannelId(channelId);
+        if (!mapping) {
+          console.log(`⚠️ [Avisos] El canal de Discord ${channelId} no está vinculado a ningún chat de WhatsApp (revisa "mappings").`);
+          return;
+        }
+        if (!isGroupJid(mapping.whatsapp_jid)) {
+          console.log(`⚠️ [Avisos] Ese canal está vinculado a ${mapping.whatsapp_jid}, que no es un grupo (@g.us).`);
+          return;
+        }
+        jid = mapping.whatsapp_jid;
+        const channelName = discordService.client?.channels?.cache?.get(channelId)?.name;
+        alias = rest.slice(1).join(' ') || (channelName ? `#${channelName}` : '');
+      } else if (isGroupJid(rest[0])) {
         jid = rest[0];
         alias = rest.slice(1).join(' ');
       } else {
@@ -200,7 +220,7 @@ export class ConsoleService {
       console.log(`✅ [Avisos] Quitado: ${res.jid}${res.alias ? ` (${res.alias})` : ''}.`);
       return;
     }
-    console.log('⚠️ Uso: avisos [list] | avisos add <ID@g.us | nombre> [alias] | avisos remove <alias|ID>');
+    console.log('⚠️ Uso: avisos [list] | avisos add <ID@g.us | ID canal Discord | nombre> [alias] | avisos remove <alias|ID>');
   }
 
   /**
