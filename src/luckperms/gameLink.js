@@ -127,12 +127,12 @@ export class GameLinkService {
    * Mensaje de grupo que no es !vincular pero contiene un posible código: se anula y, si lo era, se borra.
    * @returns {Promise<number>} códigos anulados
    */
-  async burnLeaked({ sock, msg, jid, text }) {
+  async burnLeaked({ sock, msg, jid, text, silent = false }) {
     if (!this.lp.enabled || !this.lp.ready || !jid.endsWith('@g.us')) return 0;
     const codes = String(text || '').match(CODE_IN_TEXT_RE);
     if (!codes) return 0;
     const burned = await this.lp.burnCodes(codes);
-    if (burned) {
+    if (burned && !silent) {
       const deleted = await this.deleteMessage(sock, msg);
       await sock.sendMessage(jid, {
         text: `⚠️ Había un código de vinculación en ese mensaje y lo he anulado${deleted ? ' (y borrado el mensaje)' : ''}. Los códigos se envían al bot *por privado*.`,

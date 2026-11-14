@@ -45,6 +45,8 @@ export const CONFIG = {
     webhookCacheTTL: parseInt(process.env.DISCORD_WEBHOOK_CACHE_TTL, 10) || 300000,
   },
 
+  waCommandGroups: new Set((process.env.WA_COMMAND_GROUPS || '').split(',').map((id) => id.trim()).filter(Boolean)),
+
   // Aviso "vincula tu cuenta" de WhatsApp: el bot solo lo muestra en estos grupos y para estos comandos.
   // Por privado y en cualquier otro grupo no responde nada (queda en la consola).
   linkHint: {

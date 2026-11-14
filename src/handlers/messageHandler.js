@@ -10,6 +10,7 @@ import { handleAccountCommand } from '../luckperms/accountCommands.js';
 import { gameLinkService, isGameCode } from '../luckperms/gameLink.js';
 import { commandLogService } from '../services/CommandLogService.js';
 import { linkHintService } from '../services/LinkHintService.js';
+import { isPrivateJid } from '../tickets/model.js';
 
 /** Comandos para los que se avisa de que falta vincular la cuenta (alias resueltos al nombre canónico). */
 const LINK_HINT_COMMANDS = new Set(CONFIG.linkHint.commands.map((c) => resolveCommandName(c) || c));
@@ -24,7 +25,10 @@ export async function handleMessage(sock, msg) {
     if (!msg?.message || msg.key?.fromMe) return;
 
     const jid = msg.key.remoteJid;
-    if (jid?.endsWith('@broadcast') || jid?.endsWith('@newsletter')) return;
+    if (!jid) return;
+    const isGroup = jid.endsWith('@g.us');
+    const isPrivate = isPrivateJid(jid);
+    if (!isGroup && !isPrivate) return;
 
     // Obtener texto normalizado del mensaje
     const text = extractWaText(msg);
@@ -32,6 +36,14 @@ export async function handleMessage(sock, msg) {
 
     // Verificar si el mensaje corresponde a un comando válido del bot
     const parsed = parseCommand(text);
+
+    if (isGroup && !CONFIG.waCommandGroups.has(jid)) {
+      // Anular códigos expuestos sin enviar avisos ni actuar sobre mensajes del grupo.
+      await gameLinkService.burnLeaked({ sock, msg, jid, text, silent: true })
+        .catch((err) => console.error('⚠️ [Vincular] No se pudo anular un código publicado:', err.message));
+      return;
+    }
+    if (isPrivate && parsed.command !== 'vincular') return;
 
     // Un código de /whatsapp link publicado en un grupo deja de valer (!vincular lo trata más abajo).
     if (jid.endsWith('@g.us') && luckPermsService.enabled && !(parsed.isCommand && parsed.command === 'vincular')) {

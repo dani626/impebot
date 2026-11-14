@@ -155,6 +155,13 @@ test('la apertura guiada y los comandos históricos no crean tickets accidentale
   assert.equal(await f.service.handleWhatsApp({ jid, isFromMe: true, text: '!ticket' }), true);
 });
 
+test('ignora texto por privado cuando el remitente no tiene tickets abiertos', async () => {
+  const f = fixture();
+  await f.service.handleWhatsApp({ jid: '123@lid', text: 'test', messageId: 'plain-text' });
+  assert.equal(f.state.wa.length, 0);
+  assert.equal(f.state.mutations.length, 0);
+});
+
 test('rechaza respuestas y cierres de tickets ajenos antes de mutar', async () => {
   const f = fixture();
   await f.service.handleWhatsApp({ jid: '123@s.whatsapp.net', text: '!responder 1 | Ataque', messageId: 'x' });

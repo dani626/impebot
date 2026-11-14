@@ -177,13 +177,14 @@ export class TicketService {
     }
   }
 
-  async selectOwned(jid, number) {
+  async selectOwned(jid, number, { implicit = false } = {}) {
     if (number) {
       const ticket = await this.backend.get(number);
       if (ticket.whatsappJid !== jid) throw ticketError('Ticket no encontrado.', 404);
       return ticket;
     }
     const active = (await this.ownedTickets(jid)).filter((t) => t.status !== 'CLOSED');
+    if (implicit && active.length !== 1) return null;
     if (active.length !== 1) throw ticketError(active.length ? 'Tienes varios tickets. Usa !responder NUMERO | mensaje o !cerrar NUMERO.' : 'No tienes tickets abiertos. Usa !ticket.');
     return active[0];
   }
@@ -298,7 +299,8 @@ export class TicketService {
       return;
     }
     this.wizards.delete(jid);
-    const ticket = await this.selectOwned(jid, number);
+    const ticket = await this.selectOwned(jid, number, { implicit: !command });
+    if (!ticket) return;
     await this.serial(`ticket:${ticket.number}`, async () => {
       const eventId = waEventId(jid, messageId);
       if (await this.repository.delivered(this.key(ticket), eventId, 'incoming')) return;
