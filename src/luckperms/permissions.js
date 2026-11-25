@@ -29,6 +29,8 @@ export const PERMISSIONS = {
   account: { node: 'impebot.account', open: true },
   linkAdmin: { node: 'impebot.link.admin' },
   ticketsStaff: { node: 'impebot.tickets.staff' },
+  ticketsDiscordUse: { node: 'impebot.tickets.use', open: true },
+  ticketsAdmin: { node: 'impebot.tickets.admin' },
   // De momento /play es libre: no exige vincular la cuenta ni permiso. impebot.music.play = false se lo quita a alguien.
   musicPlay: { node: 'impebot.music.play', open: true, free: true },
   musicControl: { node: 'impebot.music.control', open: true },

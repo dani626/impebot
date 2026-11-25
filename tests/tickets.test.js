@@ -16,11 +16,12 @@ const ticket = () => ({ id: 'ticket-one', number: 1, subject: 'Necesito ayuda', 
   ] });
 
 function fixture(initial = ticket()) {
-  const state = { ticket: initial, routes: new Map(), deliveries: new Set(), wa: [], dc: [], created: 0, mutations: [] };
+  const state = { ticket: initial, routes: new Map(), deliveries: new Set(), wa: [], dc: [], edits: [], created: 0, mutations: [] };
   const discord = Object.assign(new EventEmitter(), {
     isReady: true,
     async createTicketChannel() { state.created++; return { id: 'channel', async delete() {} }; },
-    async sendMessage(channelId, payload) { state.dc.push({ channelId, ...payload }); return { attachments: new Map() }; },
+    async sendMessage(channelId, payload) { state.dc.push({ channelId, ...payload }); return { id: `msg-${state.dc.length}`, attachments: new Map() }; },
+    async editChannelMessage(channelId, messageId, payload) { state.edits.push({ channelId, messageId, ...payload }); },
     async registerTicketCommands() {},
   });
   const whatsapp = { isReady: true, async sendMessage(to, payload) { state.wa.push({ to, ...payload }); } };
@@ -37,6 +38,7 @@ function fixture(initial = ticket()) {
     async delivered(key, id, destination) { return state.deliveries.has(`${key}/${id}/${destination}`); },
     async markDelivered(key, id, destination) { state.deliveries.add(`${key}/${id}/${destination}`); },
     async setRouteStatus(key, status, meta) { Object.assign(state.routes.get(key), { last_status: status, last_meta: meta }); },
+    async setControlMessage(key, id) { state.routes.get(key).control_message_id = id; },
   };
   const service = new TicketService({ backend, repository, whatsapp, discord, config: { enabled: true, web: { url: 'https://example.test' }, pollIntervalMs: 5000, guildId: 'guild', staffRoleIds: ['staff'] } });
   return { service, state, backend, discord, whatsapp, repository };
@@ -61,7 +63,7 @@ test('notas internas, sistema y mensajes del dueño nunca salen a WhatsApp', asy
   await f.service.sync(f.state.ticket);
   assert.equal(f.state.wa.length, 1);
   assert.match(f.state.wa[0].text, /Respuesta pública/);
-  assert.ok(f.state.dc.some((m) => m.content.includes('SECRETO')));
+  assert.ok(f.state.dc.some((m) => m.content?.includes('SECRETO')));
   assert.ok(f.state.dc.every((m) => m.allowedMentions.parse.length === 0));
   await f.service.sync(f.state.ticket);
   assert.equal(f.state.wa.length, 1, 'persistencia evita repetir respuestas');
@@ -176,12 +178,12 @@ test('los comandos no registrados no se ejecutan y los permisos se consultan de 
   const edits = [];
   const interaction = { isChatInputCommand: () => true, commandName: 'cerrar', guildId: 'guild', channelId: 'channel', user: { id: 'attacker' },
     async deferReply() {}, async editReply(text) { edits.push(text); },
-    guild: { members: { async fetch() { return { permissions: { has: () => false }, roles: { cache: new Set() } }; } } },
+    guild: { id: 'guild', members: { async fetch() { return { permissions: { has: () => false }, roles: { cache: new Set() } }; } } },
   };
   await f.service.handleInteraction(interaction);
   assert.match(edits[0], /rol de soporte/);
   assert.equal(f.state.mutations.length, 0);
-  assert.equal(ticketCommands().length, 7);
+  assert.equal(ticketCommands().length, 8);
 });
 
 test('el cliente web requiere HTTPS, secreto y no sigue redirecciones', async () => {
@@ -231,7 +233,7 @@ test('/responder publica y /nota persiste sin salir al jugador', async () => {
   const interaction = (name) => ({ isChatInputCommand: () => true, commandName: name, id: `event-${name}`, guildId: 'guild', channelId: 'channel', user: { id: 'staff' },
     async deferReply() {}, async editReply(text) { edits.push(text); },
     options: { getString: () => name === 'nota' ? 'Secreto' : 'Respuesta', getAttachment: () => null },
-    guild: { members: { async fetch() { return { displayName: 'Ana', permissions: { has: () => false }, roles: { cache: new Set(['staff']) } }; } } },
+    guild: { id: 'guild', members: { async fetch() { return { displayName: 'Ana', permissions: { has: () => false }, roles: { cache: new Set(['staff']) } }; } } },
   });
   await f.service.handleInteraction(interaction('nota'));
   assert.equal(f.state.wa.length, 0);

@@ -1,6 +1,6 @@
 import mariadb from 'mariadb';
 import { CONFIG } from '../config.js';
-import { TICKET_DDL } from '../tickets/schema.js';
+import { TICKET_DDL, migrateTicketSchema } from '../tickets/schema.js';
 import { MODERATION_DDL } from './moderationSchema.js';
 import { CHANNEL_MAPPINGS_DDL, MESSAGE_MAPPINGS_DDL, migrateRelaySchema } from './relaySchema.js';
 
@@ -145,6 +145,7 @@ class DatabaseService {
 
       if (CONFIG.tickets.enabled) {
         for (const ddl of TICKET_DDL) await dbConn.query(ddl);
+        await migrateTicketSchema(dbConn, { database: CONFIG.db.database });
       }
       console.log(`📋 [DatabaseService] Tablas requeridas verificadas / listas.`);
     } catch (err) {

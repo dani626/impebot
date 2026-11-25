@@ -80,7 +80,7 @@ export class DiscordService extends EventEmitter {
         interaction.commandName = canonical;
       }
       if (interaction.isChatInputCommand?.()) this.logSlashCommand(interaction);
-      else if (interaction.isButton?.()) this.logButtonClick(interaction);
+      else if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isModalSubmit?.()) this.logButtonClick(interaction);
       this.emit('interaction', interaction);
     });
 
@@ -118,7 +118,7 @@ export class DiscordService extends EventEmitter {
     }
   }
 
-  /** Deja constancia de cada pulsación de botón (controles de música, etc.). */
+  /** Deja constancia de cada botón, menú o formulario (solo su customId, nunca el texto escrito). */
   logButtonClick(interaction) {
     try {
       commandLogService.log({
@@ -197,24 +197,72 @@ export class DiscordService extends EventEmitter {
     return await channel.send(content);
   }
 
-  async createTicketChannel(ticket) {
-    if (!this.isReady || !CONFIG.discord.guildId) throw new Error('Discord no está disponible para tickets.');
-    const guild = await this.client.guilds.fetch(CONFIG.discord.guildId);
+  /**
+   * Crea el canal privado de un ticket. Sin opciones usa el servidor, la categoría y los roles del .env
+   * (tickets de WhatsApp y web); los tickets de Discord pasan su servidor, categoría, roles y dueño.
+   */
+  async createTicketChannel(ticket, { guildId, categoryChannelId, staffRoleIds, ownerDiscordId, channelName, topic } = {}) {
+    guildId ||= CONFIG.discord.guildId;
+    if (!this.isReady || !guildId) throw new Error('Discord no está disponible para tickets.');
+    const guild = await this.client.guilds.fetch(guildId);
     const roles = await guild.roles.fetch();
-    const staffIds = CONFIG.tickets.staffRoleIds;
-    if (staffIds.some((id) => id === guild.id || !roles.has(id))) throw new Error('TICKETS_STAFF_ROLE_IDS contiene un rol inválido.');
-    const permissions = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles];
+    const requested = [...new Set(staffRoleIds ?? CONFIG.tickets.staffRoleIds)];
+    if (requested.includes(guild.id)) throw new Error('La lista de roles de staff de tickets contiene un rol inválido (@everyone).');
+    // Un rol borrado en Discord no debe impedir abrir tickets: se omite y se avisa.
+    const staffIds = requested.filter((id) => roles.has(id));
+    const missing = requested.filter((id) => !roles.has(id));
+    if (missing.length) console.warn(`⚠️ [Tickets] Roles de staff inexistentes en ${guild.id}, se omiten: ${missing.join(', ')}`);
+    const base = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks];
     return guild.channels.create({
-      name: `ticket-${ticket.number}-${ticket.subject}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 100),
+      name: channelName || `ticket-${ticket.number}-${ticket.subject}`.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').slice(0, 100),
       type: ChannelType.GuildText,
-      parent: CONFIG.tickets.categoryId || undefined,
-      topic: `Ticket #${ticket.number} | ${ticket.category} | ${ticket.status} | Respuestas al jugador: /responder. Notas: /nota.`,
+      parent: (categoryChannelId === undefined ? CONFIG.tickets.categoryId : categoryChannelId) || undefined,
+      topic: topic || `Ticket #${ticket.number} | ${ticket.category} | ${ticket.status} | Respuestas al jugador: /responder. Notas: /nota.`,
       permissionOverwrites: [
         { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
-        { id: this.client.user.id, allow: [...permissions, PermissionFlagsBits.ManageChannels] },
-        ...staffIds.map((id) => ({ id, allow: permissions })),
+        { id: this.client.user.id, allow: [...base, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageMessages] },
+        ...(ownerDiscordId ? [{ id: ownerDiscordId, allow: base }] : []),
+        ...staffIds.map((id) => ({ id, allow: [...base, PermissionFlagsBits.ManageMessages] })),
       ],
     });
+  }
+
+  async getChannel(channelId) {
+    if (!this.client || !this.isReady) throw new Error('[DiscordService] Cliente de Discord no conectado.');
+    return this.client.channels.fetch(channelId);
+  }
+
+  /** perms = { ViewChannel: true, SendMessages: false, ... } o null para quitar el permiso propio del usuario/rol. */
+  async setTicketParticipantPermission(channelId, targetId, type, perms) {
+    const channel = await this.getChannel(channelId);
+    if (perms === null) return channel.permissionOverwrites.delete(targetId);
+    return channel.permissionOverwrites.edit(targetId, perms, { type: type === 'role' ? 0 : 1 });
+  }
+
+  /** Al cerrar: los participantes siguen leyendo, pero ya no escriben. */
+  /** participants = [{ id, type: 'user'|'role' }]. Un participante que ya no existe no frena a los demás. */
+  async lockTicketChannel(channelId, participants) {
+    return this.setSendPermission(channelId, participants, false);
+  }
+
+  async unlockTicketChannel(channelId, participants) {
+    return this.setSendPermission(channelId, participants, true);
+  }
+
+  async setSendPermission(channelId, participants, allow) {
+    const channel = await this.getChannel(channelId);
+    for (const p of participants) {
+      await channel.permissionOverwrites.edit(p.id, { SendMessages: allow }, { type: p.type === 'role' ? 0 : 1 })
+        .catch((err) => console.warn(`[Tickets] Permiso de escritura de ${p.id} en ${channelId}:`, err.message));
+    }
+  }
+
+  async renameTicketChannel(channelId, newName) {
+    return (await this.getChannel(channelId)).setName(newName);
+  }
+
+  async deleteTicketChannel(channelId, reason) {
+    return (await this.getChannel(channelId)).delete(reason);
   }
 
   /**
@@ -308,7 +356,7 @@ export class DiscordService extends EventEmitter {
   }
 
   async registerTicketCommands(commands) {
-    return this.registerGuildCommands(commands);
+    return this.registerGuildCommands(commands, { extra: true });
   }
 
   /**

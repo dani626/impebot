@@ -29,12 +29,19 @@ const actorSchema = z.object({
     // Los roles y nombres enviados por el cliente no se usan como autorización.
     username: z.string().max(128).optional(),
     role: z.string().max(16).optional(),
+    // Jugador de Discord escribiendo en su propio ticket: nunca concede permisos de staff.
+    asPlayer: z.boolean().optional(),
 });
+const discordIdSchema = z.string().regex(/^\d{16,24}$/);
 const numberSchema = z.number().int().positive();
 const eventSchema = z.string().min(1).max(191);
 export const impebotRequest = z.discriminatedUnion('action', [
     z.object({ action: z.literal('link'), jid: jidSchema, code: z.string().regex(/^[a-f0-9]{32}$/) }),
-    createTicketSchema.extend({ action: z.literal('create'), jid: jidSchema, eventId: eventSchema, username: z.string().max(128).optional() }),
+    // jid (WhatsApp) o discordId (panel de Discord); botAction exige uno de los dos.
+    createTicketSchema.extend({
+        action: z.literal('create'), jid: jidSchema.optional(), discordId: discordIdSchema.optional(), eventId: eventSchema,
+        username: z.string().max(128).optional(), priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).optional(),
+    }),
     ticketMessageSchema.extend({ action: z.literal('message'), number: numberSchema, eventId: eventSchema, actor: actorSchema }),
     z.object({ action: z.literal('update'), number: numberSchema, changes: ticketUpdateSchema, actor: actorSchema }),
 ]);
@@ -55,7 +62,10 @@ async function resolveActor(actor: z.infer<typeof actorSchema>) {
     if (actor.platform === 'whatsapp') return { user: await linkForJid(jidSchema.parse(actor.id)), player: true };
     if (!/^\d{16,24}$/.test(actor.id)) throw new HttpError(403, 'Identidad Discord inválida');
     const user = await db.user.findUnique({ where: { discordId: actor.id } });
-    if (!user || !isStaff(user.role)) throw new HttpError(403, 'Vincula tu Discord en Mi cuenta; necesitas un rol de staff en la web');
+    if (!user) throw new HttpError(403, 'Vincula tu Discord en Mi cuenta en la web');
+    // Como jugador solo accede a sus propios tickets, sin notas internas ni cambios de staff (ver botAction).
+    if (actor.asPlayer) return { user, player: true };
+    if (!isStaff(user.role)) throw new HttpError(403, 'Vincula tu Discord en Mi cuenta; necesitas un rol de staff en la web');
     if (await needsTwoFactor(user)) throw new HttpError(403, 'Activa la verificación en dos pasos en Mi cuenta');
     return { user, player: false };
 }
@@ -77,13 +87,16 @@ export async function botTicketDetail(number: number) {
         where: { number },
         include: {
             ...ticketSummaryInclude,
+            user: { select: { id: true, username: true, discordId: true } },
             messages: { include: { author: { select: { id: true, username: true, role: true } } }, orderBy: { createdAt: 'asc' } },
         },
     });
     if (!ticket) throw new HttpError(404, 'Ticket no encontrado');
     const [link] = await db.$queryRaw<LinkRow[]>`SELECT user_id, whatsapp_jid, linked_at FROM impebot_links WHERE user_id = ${ticket.userId}`;
+    const { discordId, ...user } = ticket.user;
     return {
-        ...toTicketSummary(ticket),
+        ...toTicketSummary({ ...ticket, user }),
+        ownerDiscordId: discordId || null,
         whatsappJid: link?.whatsapp_jid || null,
         whatsappLinkedAt: link?.linked_at?.toISOString() || null,
         messages: ticket.messages.map((m) => ({
@@ -136,7 +149,13 @@ export async function botAction(input: unknown) {
         return { username: user.username };
     }
     if (data.action === 'create') {
-        const user = await linkForJid(data.jid);
+        let user: User;
+        if (data.jid) user = await linkForJid(data.jid);
+        else if (data.discordId) {
+            const found = await db.user.findUnique({ where: { discordId: data.discordId } });
+            if (!found) throw new HttpError(403, 'Primero vincula tu cuenta de Discord en Mi cuenta en la web para abrir tickets.');
+            user = found;
+        } else throw new HttpError(400, 'Falta jid o discordId');
         rateLimit(`impebot-create:${user.id}`, 10, 60 * 60_000);
         // Compras/apelaciones con pedido o sanción se crean en la web con sus verificaciones propias.
         if (data.orderId || data.sanctionId) throw new HttpError(400, 'Vincula pedidos o sanciones desde la web');
@@ -150,7 +169,7 @@ export async function botAction(input: unknown) {
             const ticket = await tx.ticket.create({
                 data: {
                     userId: user.id, subject: data.subject, category: data.category,
-                    priority: data.category === 'compra' ? 'HIGH' : 'NORMAL',
+                    priority: data.priority ?? (data.category === 'compra' ? 'HIGH' : 'NORMAL'),
                     messages: { create: { body: data.message, authorId: user.id } },
                 },
             });
