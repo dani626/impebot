@@ -2,7 +2,8 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import mariadb from 'mariadb';
 import { TicketRepository } from '../src/tickets/TicketRepository.js';
-import { TICKET_DDL } from '../src/tickets/schema.js';
+import { TICKET_DDL, migrateTicketSchema } from '../src/tickets/schema.js';
+import { TicketConfigRepository } from '../src/tickets/TicketConfigRepository.js';
 
 if (!process.env.TICKET_TEST_PORT) throw new Error('Ejecuta scripts/run-db-tests.js para usar una MariaDB temporal.');
 let pool;
@@ -10,6 +11,8 @@ let repository;
 before(async () => {
   pool = mariadb.createPool({ host: '127.0.0.1', port: Number(process.env.TICKET_TEST_PORT), user: 'root', database: 'impebot_test', connectionLimit: 5 });
   for (const ddl of TICKET_DDL) await pool.query(ddl);
+  await migrateTicketSchema(pool, { database: 'impebot_test' });
+  await migrateTicketSchema(pool, { database: 'impebot_test' });
   repository = new TicketRepository({
     query: (sql, params) => pool.query(sql, params),
     async transaction(work) {
@@ -72,4 +75,40 @@ test('los punteros y las entregas sobreviven a otra instancia de repositorio', a
   assert.equal((await next.routeByChannel('channel123')).ticket_number, number);
   assert.equal(await next.delivered('local:test', 'message123', 'whatsapp'), true);
   assert.equal(await next.delivered('local:test', 'other', 'whatsapp'), false);
+});
+
+test('tickets de Discord: dueño por ID de Discord, límite max_open y propiedad', async () => {
+  const discordUserId = '111111111111111111';
+  const base = { subject: 'Desde Discord', category: 'bug', message: 'Hola', discordUserId, username: 'Gamer', guildId: 'g1', customCategorySlug: 'bugs', maxOpen: 2 };
+  const results = await Promise.allSettled([1, 2, 3].map((i) => repository.create({ ...base, eventId: `dcopen:${i}` })));
+  // Bajo concurrencia puede perder más de una (bloqueo mutuo); nunca se supera el límite.
+  assert.ok(results.filter((r) => r.status === 'fulfilled').length <= 2);
+  for (let i = 4; i < 7; i++) await repository.create({ ...base, eventId: `dcopen:${i}` }).catch(() => {});
+  const [{ n }] = await pool.query("SELECT COUNT(*) AS n FROM support_tickets WHERE owner_discord_id = ? AND status <> 'CLOSED'", [discordUserId]);
+  assert.equal(Number(n), 2);
+  // El cupo es por servidor: en otro servidor aún puede abrir.
+  assert.equal((await repository.create({ ...base, guildId: 'g2', eventId: 'dcopen:g2' })).guildId, 'g2');
+  const t = results.find((r) => r.status === 'fulfilled').value;
+  assert.equal(t.origin, 'discord'); assert.equal(t.ownerDiscordId, discordUserId); assert.equal(t.whatsappJid, null); assert.equal(t.customCategorySlug, 'bugs');
+  const player = { id: discordUserId, username: 'Gamer', role: 'USER', platform: 'discord' };
+  await repository.message(t.number, { body: 'Más datos', actor: player, eventId: 'dcmsg:1' });
+  await assert.rejects(() => repository.message(t.number, { body: 'No', actor: { ...player, id: '222222222222222222' }, eventId: 'dcmsg:2' }), (err) => err.status === 403);
+  await repository.update(t.number, { status: 'CLOSED' }, player);
+  await repository.update(t.number, { status: 'OPEN' }, helper);
+});
+test('configuración por servidor, categorías, paneles y participantes', async () => {
+  const config = new TicketConfigRepository(repository.db);
+  assert.equal((await config.guild('g1')).maxOpenPerUser, 3);
+  const cfg = await config.updateGuild('g1', { maxOpenPerUser: 5, staffRoleIds: ['r1'], logChannelId: 'logs' });
+  assert.deepEqual([cfg.maxOpenPerUser, cfg.staffRoleIds, cfg.logChannelId, cfg.requireLinkedWeb], [5, ['r1'], 'logs', true]);
+  const cat = await config.createCategory('g1', { slug: 'compras', label: 'Compras', baseCategory: 'compra', staffRoleIds: ['r2'] });
+  await assert.rejects(() => config.createCategory('g1', { slug: 'compras', label: 'Otra' }), (err) => err.code === 'ER_DUP_ENTRY');
+  assert.deepEqual((await config.updateCategory(cat.id, { enabled: false })).enabled, false);
+  assert.equal((await config.categories('g1', { enabledOnly: true })).length, 0);
+  await config.savePanel('g1', { channelId: 'c', messageId: 'm1', title: 'T', description: 'D', mode: 'select', categoryIds: [cat.id] });
+  assert.deepEqual((await config.panel('m1')).categoryIds, [cat.id]);
+  await config.addParticipant('local:x', 'u1', 'user', 'staff');
+  assert.deepEqual(await config.participants('local:x'), [{ id: 'u1', type: 'user' }]);
+  await config.removeParticipant('local:x', 'u1');
+  assert.equal((await config.participants('local:x')).length, 0);
 });

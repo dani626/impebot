@@ -144,6 +144,8 @@ Los permisos de WhatsApp empiezan por `impebot.whatsapp.`. Los de Discord mantie
 | `impebot.music.control` | `/skip`, `/stop`, `/pause`, `/resume`, `/volumen` y botones | libre |
 | `impebot.music.queue` | `/cola` y botón de cola | libre |
 | `impebot.tickets.staff` | `/responder`, `/nota`, `/tomar`... | Gestionar servidor o `TICKETS_STAFF_ROLE_IDS` |
+| `impebot.tickets.use` | Abrir tickets desde los paneles de Discord | libre |
+| `impebot.tickets.admin` | `/ticket config`, `/ticket categoria`, `/ticket panel` | Gestionar servidor |
 | `impebot.diagnose` | `/diagnostico` (por qué alguien no ve o no puede usar los comandos) | Gestionar servidor |
 | `impebot.relay.mirror` | `/espejo` (además de Gestionar servidor) | Gestionar servidor |
 

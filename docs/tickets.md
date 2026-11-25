@@ -8,7 +8,7 @@ Requiere Node.js 24 LTS, MariaDB y el bot de Discord instalado con los scopes `b
 
 `TICKETS_ENABLED=true` activa soporte en privados. Si no indicas roles de soporte, solo quienes tienen **Administrar servidor** pueden usar los comandos. `TICKETS_CATEGORY_ID` es opcional; cada canal se crea con permisos explícitos que ocultan el ticket a `@everyone`. Los administradores de Discord conservan su acceso habitual.
 
-El bot crea tablas nuevas `support_tickets`, `support_messages`, `support_routes` y `support_deliveries` al iniciar. Necesita la base disponible antes de abrir los transportes. No modifica registros del relay ni importa sus mensajes privados antiguos como tickets.
+El bot crea las tablas `support_tickets`, `support_messages`, `support_routes`, `support_deliveries`, `support_guild_configs`, `support_categories`, `support_panels` y `support_participants` al iniciar, y migra las de versiones anteriores sin perder datos (`owner_jid` pasa a admitir nulos y el índice único `uk_support_active_owner` se sustituye por un límite comprobado en la apertura). Necesita la base disponible antes de abrir los transportes. No modifica registros del relay ni importa sus mensajes privados antiguos como tickets.
 
 ### Modo local
 
@@ -64,9 +64,41 @@ Los prefijos `/` y `.` también funcionan. Los comandos históricos de más de t
 - `/cerrar`, `/reabrir`: ciclo de vida.
 - `/prioridad valor`: `LOW`, `NORMAL`, `HIGH`, `URGENT`.
 
-El chat normal permanece en Discord. Solo `/nota` lo incorpora como nota al historial. Las respuestas de comandos son privadas para quien los ejecuta. Los canales de tickets cerrados se conservan para auditoría. No los vincules manualmente a `channel_mappings`.
+El chat normal permanece en Discord. Solo `/nota` lo incorpora como nota al historial. Las respuestas de comandos son privadas para quien los ejecuta. Los canales de tickets cerrados se conservan para auditoría. No los vincules manualmente a `channel_mappings`. En los tickets abiertos desde Discord el chat del canal sí es la conversación (ver más abajo).
 
 Los adjuntos de WhatsApp se envían al canal privado, y su enlace de Discord se guarda en el mensaje. Los archivos enviados con `/responder` se muestran al jugador como enlaces. No se suben adjuntos de soporte a Catbox. Los enlaces CDN de Discord pueden caducar; esto no es un archivo permanente de evidencias. Las eliminaciones de WhatsApp no borran el historial del ticket.
+
+## Tickets abiertos desde Discord
+
+Funcionan en `DISCORD_GUILD_ID` y en cada servidor de `DISCORD_EXTRA_GUILD_IDS`, con configuración propia por servidor guardada en la MariaDB del bot (también en modo web). Los comandos `/ticket` se registran en todos esos servidores.
+
+### Configuración (Gestionar servidor o `impebot.tickets.admin`)
+
+- `/ticket config ver` · `/ticket config editar`: categoría de canales por defecto, canal de logs y transcripciones, formato (`html`/`txt`), máximo de tickets abiertos por usuario en ese servidor (3 por defecto), roles de staff globales del servidor, prefijo de prioridad en el nombre del canal, segundos antes de borrar un canal y, en modo web, `requerir_web`.
+- `/ticket categoria crear|editar|eliminar|listar`: cada categoría tiene nombre, emoji, estilo de botón, descripción, una **base** (`soporte`, `compra`, `reporte`, `apelacion`, `bug`, `otro`: la que se guarda en la web), categoría de Discord propia, roles de staff, prioridad inicial, mención de roles y mensaje de bienvenida. Máximo 25 por servidor.
+- `/ticket panel enviar canal titulo descripcion [modo] [color] [categorias]`: publica un panel con botones o menú desplegable. `/ticket panel actualizar message_id ...` lo edita. Los paneles se actualizan solos al cambiar categorías.
+
+### Apertura y conversación
+
+El jugador pulsa un botón (o elige en el menú), rellena asunto y descripción y el bot crea un canal privado visible para él, el bot y los roles de staff (los del servidor + los de la categoría; en el servidor principal también `TICKETS_STAFF_ROLE_IDS`). Exige `impebot.tickets.use` (libre salvo que LuckPerms lo niegue) y no permite superar el máximo de tickets abiertos.
+
+En estos canales el jugador escribe directamente: sus mensajes y los del staff se guardan en el historial (con los enlaces de los adjuntos) y no se vuelven a publicar. Si el jugador tiene WhatsApp vinculado, las respuestas del staff también le llegan allí. Los invitados añadidos con `/ticket add` hablan en el canal pero no se guardan en el historial. **`/nota` nunca se publica en estos canales**: se guarda como nota interna y solo se confirma en privado al staff.
+
+En modo web el jugador debe tener Discord vinculado en **Mi cuenta** de la web; el ticket es nativo de la web (misma numeración). Si un servidor pone `requerir_web` en `false`, quien no esté vinculado obtiene un ticket local del bot (numeración propia, no visible en la web).
+
+### Mensaje de control
+
+Cada canal de ticket (también los de WhatsApp y web) tiene un mensaje fijado con estado, prioridad, categoría, creador, responsable y origen, que se edita al cambiar. Botones: **Tomar/Soltar**, **Cerrar**, **Transcripción**; cerrado: **Reabrir**, **Transcripción**, **Borrar** (pide confirmación y solo funciona con el ticket cerrado). Selector de prioridad: actualiza el embed, cambia el prefijo del canal (🟢 🔵 🟠 🔴; como máximo una vez cada 5 minutos por el límite de Discord, sin bloquear el botón) y, al pasar a alta o urgente, menciona solo a los roles de staff si la categoría lo tiene activado.
+
+Cerrar lo puede hacer el creador o el staff; el resto de controles solo el staff (roles del servidor o de la categoría, Gestionar servidor o `impebot.tickets.staff`; con LuckPerms activo manda el permiso). Al cerrar un ticket de Discord, el jugador y los invitados dejan de poder escribir (siguen leyendo) y la transcripción se envía al canal de logs; al reabrir recuperan la escritura. Borrar envía la transcripción, marca la ruta como borrada (el sondeo no la recrea) y elimina el canal tras la espera configurada.
+
+### Dentro de un canal de ticket (staff)
+
+- `/ticket add [usuario] [rol]` · `/ticket remove [usuario] [rol]`: dan o quitan acceso; nunca quitan al creador ni al bot.
+- `/ticket transcripcion`: sube la transcripción al canal de logs.
+- `/ticket renombrar nombre`.
+
+Las transcripciones HTML escapan todo el contenido y solo enlazan adjuntos `http(s)`; incluyen hasta 2000 mensajes.
 
 ## Recuperación y límites
 

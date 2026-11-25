@@ -93,6 +93,24 @@ describe('puente real de impecraft-web sobre MariaDB temporal', () => {
         expect((await botList(new URLSearchParams({ jid }))) as unknown[]).toHaveLength(1);
     });
 
+    it('un jugador de Discord abre con su discordId y solo actúa en sus tickets', async () => {
+        const discordId = '76543210987654321';
+        await expect(botAction({ action: 'create', discordId, eventId: 'dc:create:unlinked', subject: 'Desde Discord', category: 'soporte', message: 'Hola' })).rejects.toMatchObject({ status: 403 });
+        await expect(botAction({ action: 'create', eventId: 'dc:create:none', subject: 'Sin dueño', category: 'soporte', message: 'Hola' })).rejects.toMatchObject({ status: 400 });
+        const gamer = await db.user.create({ data: { email: 'gamer@test.invalid', username: 'Gamer', password: 'fixture', discordId } });
+        const t = await botAction({ action: 'create', discordId, eventId: 'dc:create', subject: 'Desde Discord', category: 'bug', message: 'Hola', priority: 'URGENT' }) as Awaited<ReturnType<typeof botTicketDetail>>;
+        expect(t.user.id).toBe(gamer.id); expect(t.priority).toBe('URGENT'); expect(t.ownerDiscordId).toBe(discordId);
+        const asPlayer = { id: discordId, platform: 'discord' as const, asPlayer: true };
+        await botAction({ action: 'message', number: t.number, body: 'Más datos', actor: asPlayer, eventId: 'dcmsg:1' });
+        await expect(botAction({ action: 'message', number: t.number, body: 'Nota', internal: true, actor: asPlayer, eventId: 'dcmsg:2' })).rejects.toMatchObject({ status: 403 });
+        await expect(botAction({ action: 'update', number: t.number, actor: asPlayer, changes: { priority: 'LOW' } })).rejects.toMatchObject({ status: 403 });
+        await expect(botAction({ action: 'message', number, body: 'Ajeno', actor: asPlayer, eventId: 'dcmsg:3' })).rejects.toMatchObject({ status: 404 });
+        // Un staff que se marca como jugador pierde sus permisos de staff en esa operación.
+        await expect(botAction({ action: 'update', number, actor: { ...actor(), asPlayer: true }, changes: { priority: 'LOW' } })).rejects.toMatchObject({ status: 404 });
+        await botAction({ action: 'update', number: t.number, actor: asPlayer, changes: { status: 'CLOSED' } });
+        expect((await botTicketDetail(t.number)).status).toBe('CLOSED');
+    });
+
     it('el límite de tickets y la desvinculación se aplican en el servidor', async () => {
         for (let i = 2; i <= 3; i++) await botAction({ action: 'create', jid, eventId: `create:${i}`, subject: `Nuevo caso ${i}`, category: 'soporte', message: 'Ayuda' });
         await expect(botAction({ action: 'create', jid, eventId: 'create:4', subject: 'Cuarto caso', category: 'soporte', message: 'Ayuda' })).rejects.toMatchObject({ status: 429 });
